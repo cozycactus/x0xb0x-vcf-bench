@@ -82,6 +82,8 @@ button[aria-pressed="true"] { background: var(--gold-soft); border-color: var(--
 .readout { font: 15px var(--mono); font-variant-numeric: tabular-nums; min-width: 8ch; text-align: right; }
 /* sequencer */
 .seqhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+select { font: 14px var(--body); color: var(--ink); background: var(--mask); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; min-height: 40px; max-width: 100%; min-width: 0; }
+select:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .steps { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 5px; }
 .step { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--mask); color: var(--ink); cursor: pointer; min-width: 0; min-height: 0; font: inherit; }
 .step .led { width: 8px; height: 8px; border-radius: 50%; background: var(--led-off); }
@@ -159,26 +161,12 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
 
   <section class="board" aria-label="Sequencer">
     <div class="seqhead">
-      <span class="legend">Pattern, 16 steps</span>
+      <span class="legend" id="patTitle">Pattern, 16 steps</span>
       <div class="transport">
-        <button id="presetStudy" type="button">Study pattern</button>
-        <button id="presetLine" type="button">Bass line</button>
+        <label class="small" for="preset">Preset</label>
+        <select id="preset"></select>
         <button id="presetClear" type="button">Clear</button>
       </div>
-    </div>
-    <div class="transport" role="group" aria-label="Goa patterns">
-      <span class="small">Goa, in E, 145 BPM:</span>
-      <button id="goaRoll" type="button">Goa roll</button>
-      <button id="goaGallop" type="button">Gallop</button>
-      <button id="goaAcid" type="button">Goa acid</button>
-      <button id="goaSquelch" type="button">Squelch</button>
-    </div>
-    <div class="transport" role="group" aria-label="Goa lead lines">
-      <span class="small">Goa leads, also brighten the sound:</span>
-      <button id="leadSunrise" type="button">Sunrise</button>
-      <button id="leadCall" type="button">Call</button>
-      <button id="leadSpiral" type="button">Spiral</button>
-      <button id="leadTemple" type="button">Temple</button>
     </div>
     <div class="steps" id="steps"></div>
     <div class="editor">
@@ -413,7 +401,11 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     $('accent').setAttribute('aria-pressed', String(s.accent));
     $('slide').setAttribute('aria-pressed', String(s.slide));
   }
-  function commit() { store.set('steps', steps); send({ type: 'pattern', steps }); render(); }
+  let presetName = store.get('presetName', ''), edited = store.get('presetEdited', false);
+  function commit() {
+    store.set('steps', steps); send({ type: 'pattern', steps }); render();
+    if (presetName && !edited) { edited = true; store.set('presetEdited', true); showTitle(); }
+  }
   function setNote(n) {
     const s = steps[sel];
     s.note = n; s.rest = false;
@@ -426,28 +418,46 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   $('rest').addEventListener('click', () => { const s = steps[sel]; s.rest = !s.rest; commit(); });
   $('accent').addEventListener('click', () => { const s = steps[sel]; s.accent = !s.accent; commit(); });
   $('slide').addEventListener('click', () => { const s = steps[sel]; s.slide = !s.slide; commit(); });
-  $('presetStudy').addEventListener('click', () => { steps = fromStudy(); commit(); });
-  $('presetLine').addEventListener('click', () => { steps = fromLine(); commit(); });
-  $('presetClear').addEventListener('click', () => { steps = Array.from({ length: 16 }, blank); commit(); });
-
-  // Goa patterns written for this page: E phrygian and E harmonic minor, sixteenths. A token is a
-  // note name, then ' for each octave up or , for one down, then a (accent) and s (slide); - is a
-  // rest. The range is C one octave below the kit's C1 to C two octaves above it.
+  // Presets, all written for this page; none copies a record. A token is a note name, then ' for
+  // each octave up or , for one down, then a (accent) and s (slide); - is a rest. The range is C
+  // one octave below the kit's C1 to C two octaves above it.
   const NOTE = { C: 0, 'C#': 1, D: 2, 'D#': 3, E: 4, F: 5, 'F#': 6, G: 7, 'G#': 8, A: 9, 'A#': 10, B: 11 };
-  const GOA = {
-    goaRoll: "- Ea E E   - Ea E E   - Ea E E'   - Fa E G",          // rolling bass, the kick's place left empty
-    goaGallop: "Ea - E E   Ea - E E'   Ga - F E   Ea - D' E's",     // note, rest, note, note
-    goaAcid: "Ea E' F Es   G Ea F's E'   D' B C's B   Ga Fs E E'a",  // a lead line with octave jumps
-    goaSquelch: "Eas F E E'a   D#s E F's E   Eas G E A#'s   B Ea F's E",  // semitone rubs on slides
-  };
-  const LEADS = {
-    leadSunrise: "E'a G' B' E'   D#'a E' F#' G'   A'a G' F#' E'   D#'s E' B'a G'",       // harmonic minor arpeggio
-    leadCall: "E'a - F's E'   G'a F's E' -   B'a C''s B' G'   F'a E's D' E'",           // call and answer
-    leadSpiral: "E'a G' B'  E'a G' B'  E'a G' C''  E'a G' C''  B's A' G' F#'",          // three notes against four
-    leadTemple: "E's E' G's G'   F#'as F#' E' -   D#'s D#' E's F#'   G'as F#'s E' -",   // tied with slides into the same note
-  };
   // a lead wants the filter open, a longer decay, and more delay and room
   const LEAD_SOUND = { cut: 0.55, res: 0.75, env: 0.45, decay: 0.45, acc: 0.7, delay: 0.45, time: 0.4, fdbk: 0.5, space: 0.6, size: 0.6 };
+  const PRESETS = [
+    { g: 'From the study', n: 'Study demo pattern', bpm: 120, fn: () => fromStudy() },
+    { g: 'From the study', n: 'Bass line', bpm: 120, fn: () => fromLine() },
+    // classic acid: Chicago and warehouse styles, 118 to 132 BPM
+    { g: 'Classic acid', n: 'Chicago walk', bpm: 124, p: "A,a A, A A,   C A, A,s A   G A,a A, E   A,s A Ca A," },
+    { g: 'Classic acid', n: 'Octave bounce', bpm: 126, p: "Ca C' C C'a   C C's C' C   Ca C' C D#'   C Ca C's C'" },
+    { g: 'Classic acid', n: 'Squelch box', bpm: 128, p: "Cas C Gs G,   Cas D#s C -   Ca C' A#,s C   G,a Cs C' -" },
+    { g: 'Classic acid', n: 'Warehouse', bpm: 126, p: "E,a - E E,   - E,a G, E,   E,a - D E,s   E A,a G, B," },
+    { g: 'Classic acid', n: 'Minor stab', bpm: 122, p: "Da - D -   Fa - D Cs   D - Fa D   A,a - D -" },
+    { g: 'Classic acid', n: 'Rubber', bpm: 125, p: "F,a F, F F,s   F G#,s F, -   F,a C F, F   D#s F, Ga F," },
+    { g: 'Classic acid', n: 'Chromatic creep', bpm: 128, p: "Ca C# D Ca   C# Ds D# Ca   D D#s E Ca   D# E's F Ca" },
+    { g: 'Classic acid', n: 'Pentatonic run', bpm: 127, p: "A,a C D E   Ga E D C   A,a C D Es   G A Ga E" },
+    { g: 'Classic acid', n: 'Phrygian dark', bpm: 124, p: "E,a F, E, E,s   F, E, Ga F,   E,a E A#, E,s   F,a E, D E," },
+    { g: 'Classic acid', n: 'Slide city', bpm: 120, p: "Cs Cs C's Ca   G,s G,s Gs G,a   A#,s A#,s A#s A#,a   F,s Fs G,s Ga" },
+    { g: 'Classic acid', n: 'Accent machine', bpm: 130, p: "Ca C C Ca   C Ca C C   Ca C C Ca   C C Ca C" },
+    { g: 'Classic acid', n: 'Bouncing fifth', bpm: 126, p: "C,a G, C G,   C,a G,s C G,   C,a G, C G,   D#a C G, C," },
+    { g: 'Classic acid', n: 'Off-beat', bpm: 128, p: "- Ca - C   - Cas - G,   - Ca - D#   - Cs - C'a" },
+    { g: 'Classic acid', n: 'Dub acid', bpm: 118, p: "Cas C - -   G,s G, - C   - D#as D# -   C's C' A#, -" },
+    { g: 'Classic acid', n: 'Rising', bpm: 128, p: "C,a C C, C   D,a D D, D   D#,a D# D#, D#   F,a F Gs G'a" },
+    { g: 'Classic acid', n: 'Seven loop', bpm: 126, p: "Ca D# G C'   A#, G Ca D#   G C' A#, Ga   C D# G A#" },
+    { g: 'Classic acid', n: 'House shuffle', bpm: 122, p: "Ga G, G G,   A#,a G, - G   Ga G, D#s D   C G,a G A#," },
+    { g: 'Classic acid', n: 'Tweaker', bpm: 132, p: "Ca C C' Cs   C C'a C D#   Ca C C' G,s   C C'a A#, C" },
+    { g: 'Classic acid', n: 'Late night', bpm: 120, p: "D,a - D D,   F,s G, - D,   A,a - C D,s   D - Fa D," },
+    { g: 'Classic acid', n: 'Gate', bpm: 130, p: "Ca - C -   C' - Ca -   D#a - D# -   G - C'a -" },
+    // Goa, in E phrygian and E harmonic minor
+    { g: 'Goa, in E', n: 'Goa roll', bpm: 145, p: "- Ea E E   - Ea E E   - Ea E E'   - Fa E G" },
+    { g: 'Goa, in E', n: 'Gallop', bpm: 145, p: "Ea - E E   Ea - E E'   Ga - F E   Ea - D' E's" },
+    { g: 'Goa, in E', n: 'Goa acid', bpm: 145, p: "Ea E' F Es   G Ea F's E'   D' B C's B   Ga Fs E E'a" },
+    { g: 'Goa, in E', n: 'Squelch', bpm: 145, p: "Eas F E E'a   D#s E F's E   Eas G E A#'s   B Ea F's E" },
+    { g: 'Goa leads, brighter sound', n: 'Sunrise', bpm: 145, sound: LEAD_SOUND, p: "E'a G' B' E'   D#'a E' F#' G'   A'a G' F#' E'   D#'s E' B'a G'" },
+    { g: 'Goa leads, brighter sound', n: 'Call', bpm: 145, sound: LEAD_SOUND, p: "E'a - F's E'   G'a F's E' -   B'a C''s B' G'   F'a E's D' E'" },
+    { g: 'Goa leads, brighter sound', n: 'Spiral', bpm: 145, sound: LEAD_SOUND, p: "E'a G' B'  E'a G' B'  E'a G' C''  E'a G' C''  B's A' G' F#'" },
+    { g: 'Goa leads, brighter sound', n: 'Temple', bpm: 145, sound: LEAD_SOUND, p: "E's E' G's G'   F#'as F#' E' -   D#'s D#' E's F#'   G'as F#'s E' -" },
+  ];
   function parsePattern(txt) {
     return txt.trim().split(/\s+/).map((tok) => {
       if (tok === '-') return { ...blank(), rest: true };
@@ -458,11 +468,27 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
       return { note: semis - 12 * oct, oct, accent: m[3].includes('a'), slide: m[3].includes('s'), rest: false };
     });
   }
-  for (const id of Object.keys(GOA)) $(id).addEventListener('click', () => { steps = parsePattern(GOA[id]); commit(); setBpm(145); });
-  for (const id of Object.keys(LEADS)) $(id).addEventListener('click', () => {
-    steps = parsePattern(LEADS[id]); commit(); setBpm(145);
-    for (const [k, v] of Object.entries(LEAD_SOUND)) setKnob(k, v);
-    store.set('knobs', knobState);
+  // the list box: groups of presets; the title names what is loaded, and says so once it is edited
+  const presetEl = $('preset');
+  presetEl.innerHTML = '<option value="">Load a pattern…</option>' + [...new Set(PRESETS.map(p => p.g))].map(g =>
+    `<optgroup label="${g}">` + PRESETS.map((p, i) => (p.g === g ? `<option value="${i}">${p.n}${p.bpm !== 120 ? ` · ${p.bpm}` : ''}</option>` : '')).join('') + '</optgroup>').join('');
+  function showTitle() { $('patTitle').textContent = 'Pattern, 16 steps' + (presetName ? ` · ${presetName}${edited ? ', edited' : ''}` : ''); }
+  presetEl.addEventListener('change', () => {
+    if (presetEl.value === '') return;
+    const p = PRESETS[+presetEl.value];
+    steps = p.fn ? p.fn() : parsePattern(p.p);
+    presetName = p.n;
+    commit();
+    edited = false;
+    store.set('presetName', presetName); store.set('presetEdited', false);
+    showTitle();
+    setBpm(p.bpm);
+    if (p.sound) { for (const [k, v] of Object.entries(p.sound)) setKnob(k, v); store.set('knobs', knobState); }
+  });
+  $('presetClear').addEventListener('click', () => {
+    steps = Array.from({ length: 16 }, blank); commit();
+    presetName = ''; edited = false; store.set('presetName', ''); store.set('presetEdited', false);
+    presetEl.value = ''; showTitle();
   });
 
   // tempo
@@ -697,6 +723,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   });
 
   for (const k of [...KNOBS, ...FX]) drawKnob(k.id);
+  showTitle();
   setWave(wave);
   setBpm(bpm);
   render();
