@@ -10,7 +10,7 @@ The model copies an ngspice simulation of one x0xb0x build's KiCad schematic, wh
 
 Press Play, then drag the knobs up and down (arrow keys work too; double-click resets a knob). Tap a step and then a key to set its note; Down, Up, Rest, Accent and Slide change the selected step. The Goa buttons load patterns written for the page, in E at 145 BPM: four bass lines and four leads; the lead buttons also brighten the sound. If a slow phone crackles, switch "4x" to "2x".
 
-The Delay and space panel adds a tempo-synced ping-pong delay (Delay, Time, Feedback) and a reverb (Space, Size, Tone). The x0xb0x has neither; the model of the circuit is `dsp.js`, and the effects sit outside it.
+The Effects panel adds a distortion (Drive, Color; Drive 0 is off), a tempo-synced ping-pong delay (Delay, Time, Feedback) and a reverb (Space, Size, Tone). The x0xb0x has none of them; the model of the circuit is `dsp.js`, and the effects sit outside it.
 
 ## Running it locally
 

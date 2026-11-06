@@ -149,10 +149,10 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     <div class="small status" id="status">Press Play. Sound starts after the first press, as browsers require.</div>
   </section>
 
-  <section class="board" aria-label="Delay and reverb">
+  <section class="board" aria-label="Effects">
     <div class="fxhead">
-      <span class="legend">Delay and space</span>
-      <span class="small">Effects added on this page. The x0xb0x has neither, and the checks against the study leave them out.</span>
+      <span class="legend">Effects</span>
+      <span class="small">Distortion, delay and reverb added on this page. The x0xb0x has none of them, and the checks against the study leave them out.</span>
     </div>
     <div class="knobs" id="fxknobs"></div>
   </section>
@@ -248,6 +248,8 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   const DIVS = [[1, '1/16'], [2, '1/8'], [3, '3/16'], [4, '1/4'], [6, '3/8'], [8, '1/2']];   // sixteenths
   const divOf = (v) => DIVS[Math.round(v * (DIVS.length - 1))];
   const FX = [
+    { id: 'drive', label: 'Drive', def: 0, fmt: (v) => (v < 0.005 ? 'off' : (v * 10).toFixed(1)) },
+    { id: 'color', label: 'Color', def: 0.5 },
     { id: 'delay', label: 'Delay', def: 0.3 },
     { id: 'time', label: 'Time', def: 0.4, fmt: (v) => divOf(v)[1] },
     { id: 'fdbk', label: 'Feed\u00adback', def: 0.4 },
@@ -483,7 +485,11 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   let lateTotal = 0, lateSince = 0, playStart = 0, fallback = false;
   function send(m) { if (node) node.port.postMessage(m); }
 
-  // ---------- the delay and the reverb (Web Audio, outside the model) ----------
+  // ---------- distortion, delay and reverb (Web Audio, outside the model) ----------
+  // The voice first meets the distortion: a clean path and a WaveShaper path (tanh with a little
+  // asymmetry, 4x oversampled, then a Color low-pass and a DC block), crossfaded by Drive, so
+  // Drive 0 is a true bypass. The makeup gain, g^-0.7 for a curve gain g, holds the loudness
+  // within about 3 dB, since saturation lifts the quiet parts far more than the peaks.
   // dry, a delay send and a reverb send from the voice. The delay is a ping-pong pair synced to
   // the tempo, each repeat through a 250 Hz to 3.5 kHz band so it darkens, and its echoes go to
   // the reverb too. The reverb send is high-passed, delayed 35 ms and convolved with a generated
@@ -531,10 +537,37 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     band(dr, fbRL); fbRL.connect(dl);          // and the right feeds the left
     dl.connect(merge, 0, 0); dr.connect(merge, 0, 1);
     merge.connect(dout); dout.connect(master); dout.connect(send);
-    fx = { c, master, dry, send, pre, conv: null, out: null, timer: 0, dsend, dl, dr, fbLR, fbRL };
+    const inp = c.createGain(), clean = c.createGain(), shaper = c.createWaveShaper(), color = c.createBiquadFilter();
+    const dcb = c.createBiquadFilter(), dist = c.createGain(), post = c.createGain();
+    shaper.oversample = '4x';
+    color.type = 'lowpass'; color.Q.value = 0.7;
+    dcb.type = 'highpass'; dcb.frequency.value = 25;
+    inp.connect(clean); clean.connect(post);
+    inp.connect(shaper); shaper.connect(color); color.connect(dcb); dcb.connect(dist); dist.connect(post);
+    post.connect(dry); post.connect(send); post.connect(dsend);
+    fx = { c, master, dry, send, pre, conv: null, out: null, timer: 0, dsend, dl, dr, fbLR, fbRL, inp, clean, shaper, color, dist, driveDrawn: -1 };
+    setDrive(true);
     swapTail();
     setWet(true);
     setDelay(true);
+  }
+  function setDrive(now) {
+    if (!fx) return;
+    const d = knobState.drive, t = fx.c.currentTime;
+    const g = 1 + 40 * d * d;   // gain into the curve
+    const shape = (x) => Math.tanh(g * (x + 0.12 * x * x));
+    if (Math.abs(d - fx.driveDrawn) > 0.002) {
+      const n = 2048, curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) curve[i] = shape(2 * i / (n - 1) - 1);
+      fx.shaper.curve = curve;
+      fx.driveDrawn = d;
+    }
+    // the two paths differ in phase (Color, DC block), so cross over within the first 5 % of Drive
+    const w = Math.min(1, d * 20), makeup = Math.pow(g, -0.7);
+    const set = (prm, v) => { if (now) prm.value = v; else prm.setTargetAtTime(v, t, 0.02); };
+    set(fx.clean.gain, 1 - w);
+    set(fx.dist.gain, w * makeup);
+    set(fx.color.frequency, 1500 * Math.pow(12, knobState.color));
   }
   function setDelay(now) {
     if (!fx) return;
@@ -571,6 +604,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     store.set('knobs', knobState);
     if (!fx) return;
     if (id === 'space') setWet(false);
+    else if (id === 'drive' || id === 'color') setDrive(false);
     else if (id === 'delay' || id === 'time' || id === 'fdbk') setDelay(false);
     else { clearTimeout(fx.timer); fx.timer = setTimeout(swapTail, 150); }
   }
@@ -592,9 +626,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     if (node) { node.port.onmessage = null; node.disconnect(); }
     node = new AudioWorkletNode(ctx, 'x0x-vcf', { numberOfInputs: 0, outputChannelCount: [2],
       processorOptions: { os: ctx.sampleRate >= 88200 ? Math.min(os, 2) : os, knobs: { ...knobState }, wave, steps, bpm } });
-    node.connect(fx.dry);
-    node.connect(fx.send);
-    node.connect(fx.dsend);
+    node.connect(fx.inp);
     node.port.onmessage = (e) => onState(e.data);
     for (const k of KNOBS) send({ type: 'knob', name: k.id, value: knobState[k.id] });
     send({ type: 'knob', name: 'wave', value: wave });
