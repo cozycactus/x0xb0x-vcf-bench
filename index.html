@@ -1,0 +1,491 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>x0xb0x VCF Bench</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=B612:wght@400;700&family=B612+Mono&family=Saira+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: one column of instrument panels (header, knobs, ladder meter, sequencer, notes),
+   silkscreen legends on solder mask; knobs in a grid that drops to four per row on a phone. */
+:root {
+  --bg: #e6ebe8;          /* bench under a white-mask board */
+  --mask: #f7f9f8;        /* white solder mask */
+  --ink: #141816;         /* black silkscreen */
+  --muted: #56605b;
+  --line: #c3ccc7;
+  --gold: #9a6d1c;        /* ENIG pads, darkened to read on white */
+  --gold-soft: #e9d6ab;
+  --led: #d23a1e;         /* the step LEDs */
+  --led-off: #d9cfcc;
+  --key: #ffffff;
+  --key-black: #1d2120;
+  --display: "Saira Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "B612", "Segoe UI", system-ui, sans-serif;
+  --mono: "B612 Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0c0c; --mask: #141817; --ink: #edf1ee; --muted: #8e9893; --line: #2a302e;
+    --gold: #d8a94e; --gold-soft: #3a2f19; --led: #ff5b3a; --led-off: #3a2622;
+    --key: #e9ece9; --key-black: #050606; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a0c0c; --mask: #141817; --ink: #edf1ee; --muted: #8e9893; --line: #2a302e;
+  --gold: #d8a94e; --gold-soft: #3a2f19; --led: #ff5b3a; --led-off: #3a2622;
+  --key: #e9ece9; --key-black: #050606; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+.wrap { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+.board { background: var(--mask); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.legend { font-family: var(--display); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; font-size: 13px; color: var(--ink); }
+.small { font-size: 12px; color: var(--muted); }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(26px, 6vw, 38px); letter-spacing: 0.02em; margin: 0; line-height: 1; text-wrap: balance; }
+header.top { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; justify-content: space-between; }
+header.top p { margin: 6px 0 0; max-width: 60ch; color: var(--muted); }
+.transport { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button, .btn {
+  font: 600 13px var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink);
+  background: var(--mask); border: 1px solid var(--line); border-radius: 4px; padding: 9px 12px; cursor: pointer; min-height: 40px;
+}
+button:hover { border-color: var(--muted); }
+button:focus-visible, .knob:focus-visible, .step:focus-visible, .key:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+button.primary { background: var(--ink); color: var(--mask); border-color: var(--ink); min-width: 92px; }
+button[aria-pressed="true"] { background: var(--gold-soft); border-color: var(--gold); }
+.tempo { display: flex; align-items: center; gap: 4px; }
+.tempo input { width: 64px; font: 15px var(--mono); text-align: center; padding: 8px 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--mask); color: var(--ink); min-height: 40px; }
+.tempo button { min-width: 40px; padding: 9px 0; }
+/* knobs */
+.knobs { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 10px 6px; align-items: start; }
+.knobcell { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.knob { width: 100%; max-width: 92px; aspect-ratio: 1; touch-action: none; cursor: ns-resize; border-radius: 50%; }
+.knob svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.knobval { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.knobcell .legend { font-size: 12px; text-align: center; line-height: 1.1; min-height: 2.2em; display: flex; align-items: end; }
+.switch { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 92px; margin-top: 6px; }
+.switch button { min-height: 34px; padding: 6px 0; }
+/* ladder meter */
+.meter { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; }
+.meter .bar, .meter .ticks { grid-column: 1 / -1; }
+.bar { position: relative; height: 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.bar i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--gold); transition: width 60ms linear; }
+.ticks { position: relative; height: 14px; font: 10px var(--mono); color: var(--muted); }
+.ticks span { position: absolute; transform: translateX(-50%); }
+.readout { font: 15px var(--mono); font-variant-numeric: tabular-nums; min-width: 8ch; text-align: right; }
+/* sequencer */
+.seqhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.steps { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 5px; }
+.step { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--mask); color: var(--ink); cursor: pointer; min-width: 0; min-height: 0; font: inherit; }
+.step .led { width: 8px; height: 8px; border-radius: 50%; background: var(--led-off); }
+.step.playing .led { background: var(--led); box-shadow: 0 0 6px var(--led); }
+.step .note { font: 600 15px var(--display); letter-spacing: 0.02em; }
+.step .num { font: 10px var(--mono); color: var(--muted); }
+.step .marks { display: flex; gap: 3px; height: 12px; font: 9px var(--mono); }
+.step .marks b { font-weight: 400; padding: 0 2px; border-radius: 2px; }
+.step .acc { background: var(--gold); color: var(--mask); }
+.step .sl { border: 1px solid var(--muted); }
+.step.rest .note { color: var(--muted); }
+.step.sel { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+.editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+.keys { position: relative; height: 92px; max-width: 520px; width: 100%; }
+.key { position: absolute; top: 0; border: 1px solid var(--line); border-radius: 0 0 4px 4px; cursor: pointer; padding: 0; min-height: 0; font: 10px var(--mono); display: flex; align-items: end; justify-content: center; padding-bottom: 4px; text-transform: none; letter-spacing: 0; }
+.key.w { height: 100%; background: var(--key); color: #5a625e; z-index: 1; }
+.key.b { height: 58%; background: var(--key-black); color: #a7aeaa; z-index: 2; border-color: var(--key-black); }
+.key.on { background: var(--gold); color: #1b1406; border-color: var(--gold); }
+.flags { display: grid; grid-template-columns: repeat(3, auto); gap: 6px; }
+.notes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.notes > div { min-width: 0; }
+.notes h2 { font-family: var(--display); font-weight: 600; font-size: 18px; margin: 0 0 6px; letter-spacing: 0.02em; }
+.notes p, .notes li { margin: 0 0 6px; max-width: 62ch; }
+.notes ul { margin: 0; padding-left: 18px; }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.status { min-height: 1.4em; }
+@media (max-width: 760px) {
+  .knobs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .steps { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .editor { grid-template-columns: minmax(0, 1fr); }
+  .notes { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>x0xb0x VCF Bench</h1>
+      <p>The filter from the revision 30 board, played in real time from a model fitted to the ngspice study of its schematic. No real unit has been measured.</p>
+    </div>
+    <div class="transport">
+      <button id="play" class="primary" type="button" aria-pressed="false">Play</button>
+      <div class="tempo" role="group" aria-label="Tempo">
+        <button id="bpmDown" type="button" aria-label="Slower">−</button>
+        <input id="bpm" type="number" inputmode="numeric" min="60" max="200" value="120" aria-label="Tempo in BPM">
+        <button id="bpmUp" type="button" aria-label="Faster">+</button>
+        <span class="small">BPM</span>
+      </div>
+    </div>
+  </header>
+
+  <section class="board" aria-label="Panel">
+    <div class="knobs" id="knobs"></div>
+    <div class="meter">
+      <span class="legend">Ladder current, peak over 30 ms</span>
+      <span class="readout" id="uaVal">– µA</span>
+      <div class="bar" aria-hidden="true"><i id="uaBar"></i></div>
+      <div class="ticks" id="uaTicks" aria-hidden="true"></div>
+    </div>
+    <div class="small status" id="status">Press Play. Sound starts after the first press, as browsers require.</div>
+  </section>
+
+  <section class="board" aria-label="Sequencer">
+    <div class="seqhead">
+      <span class="legend">Pattern, 16 steps</span>
+      <div class="transport">
+        <button id="presetStudy" type="button">Study pattern</button>
+        <button id="presetLine" type="button">Bass line</button>
+        <button id="presetClear" type="button">Clear</button>
+      </div>
+    </div>
+    <div class="steps" id="steps"></div>
+    <div class="editor">
+      <div class="keys" id="keys" aria-label="Note for the selected step"></div>
+      <div class="flags">
+        <button id="octDown" type="button" aria-pressed="false">Down</button>
+        <button id="octUp" type="button" aria-pressed="false">Up</button>
+        <button id="rest" type="button" aria-pressed="false">Rest</button>
+        <button id="accent" type="button" aria-pressed="false">Accent</button>
+        <button id="slide" type="button" aria-pressed="false">Slide</button>
+        <button id="quality" type="button" aria-pressed="false" title="Oversampling of the filter">4x</button>
+      </div>
+    </div>
+    <div class="small">Tap a step, then a key. A key sets the note and moves to the next step; with the sequencer stopped it also plays the note once.</div>
+  </section>
+
+  <section class="board notes" aria-label="About the model">
+    <div>
+      <h2>How close it is to the study</h2>
+      <div class="tbl">
+        <table>
+          <thead><tr><th>Check</th><th>Difference</th></tr></thead>
+          <tbody>
+            <tr><td>Peak frequency, 25 Cutoff and Resonance settings</td><td class="n">≤ 0.027 oct</td></tr>
+            <tr><td>Response, 30 Hz to 5 kHz, RMS per setting</td><td class="n">0.13 dB median, 0.27 max</td></tr>
+            <tr><td>Q at full Resonance, Cutoff 0 / 50 / 100 %</td><td class="n">model 2.55 / 5.91 / 23.6, study 2.46 / 5.86 / 26.1</td></tr>
+            <tr><td>Loop margin, settings not used in the fit</td><td class="n">≤ 0.18 dB</td></tr>
+            <tr><td>Self-oscillates or not, 66 settings</td><td class="n">66 agree</td></tr>
+            <tr><td>Envelope and accent peaks, 12 cases</td><td class="n">≤ 0.036 oct</td></tr>
+            <tr><td>VCA current peaks with accent</td><td class="n">≤ 1.7 %</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <h2>What it is</h2>
+      <ul>
+        <li>A model of a model: it copies the ngspice simulation, which copies the KiCad schematic. It is not fitted to a real TB-303 or x0xb0x.</li>
+        <li>The four-rung diode ladder, Q12, Q21 and the whole feedback loop are solved together each sample, with the coupling capacitors, the output tap, the MEG, Env Mod, the accent circuit with C13, and the VCA.</li>
+        <li>The VCO is the study's ideal saw and the square shaper as ngspice drew it. The Cutoff taper is the study's assumption, 20 % at half rotation.</li>
+        <li>Left out: noise, hum, drift, the headphone amp and pair mismatch.</li>
+      </ul>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('x0xbench.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('x0xbench.' + k, JSON.stringify(v)); } catch (e) { /* storage may be off */ } },
+  };
+
+  // ---------- knobs ----------
+  const KNOBS = [
+    { id: 'tune', label: 'Tune', def: 0.5 },
+    { id: 'cut', label: 'Cut off freq', def: 0.35 },
+    { id: 'res', label: 'Reso­nance', def: 0.85 },
+    { id: 'env', label: 'Env mod', def: 0.6 },
+    { id: 'decay', label: 'Decay', def: 0.35 },
+    { id: 'acc', label: 'Accent', def: 0.8 },
+    { id: 'vol', label: 'Volume', def: 0.75 },
+  ];
+  const knobState = Object.assign(Object.fromEntries(KNOBS.map(k => [k.id, k.def])), store.get('knobs', {}));
+  let wave = store.get('wave', 'saw');
+  const SWEEP = 300, START = -150;   // degrees, 0 at twelve o'clock
+
+  function knobSVG() {
+    const ticks = [];
+    for (let i = 0; i <= 10; i++) {
+      const a = (START + SWEEP * i / 10) * Math.PI / 180;
+      const r1 = 44, r2 = i % 5 === 0 ? 49 : 47;
+      ticks.push(`<line x1="${50 + r1 * Math.sin(a)}" y1="${50 - r1 * Math.cos(a)}" x2="${50 + r2 * Math.sin(a)}" y2="${50 - r2 * Math.cos(a)}" stroke="var(--ink)" stroke-width="${i % 5 === 0 ? 1.6 : 1}"/>`);
+    }
+    return `<svg viewBox="0 0 100 100" aria-hidden="true">${ticks.join('')}
+      <path class="arc" fill="none" stroke="var(--gold)" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="50" cy="50" r="36" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+      <circle cx="50" cy="50" r="29" fill="var(--mask)" stroke="var(--line)" stroke-width="1"/>
+      <line class="ptr" x1="50" y1="50" x2="50" y2="24" stroke="var(--ink)" stroke-width="3.2" stroke-linecap="round"/></svg>`;
+  }
+  function arcPath(v) {
+    const r = 40, a0 = START * Math.PI / 180, a1 = (START + SWEEP * v) * Math.PI / 180;
+    const p = (a) => `${50 + r * Math.sin(a)} ${50 - r * Math.cos(a)}`;
+    return v <= 0.001 ? '' : `M ${p(a0)} A ${r} ${r} 0 ${SWEEP * v > 180 ? 1 : 0} 1 ${p(a1)}`;
+  }
+
+  const knobsEl = $('knobs');
+  const knobEls = {};
+  for (const k of KNOBS) {
+    const cell = document.createElement('div');
+    cell.className = 'knobcell';
+    cell.innerHTML = `<div class="knob" id="knob-${k.id}" role="slider" tabindex="0" aria-label="${k.label.replace('­', '')}" aria-valuemin="0" aria-valuemax="10">${knobSVG()}</div>
+      <span class="knobval" id="val-${k.id}"></span><span class="legend">${k.label}</span>`;
+    knobsEl.appendChild(cell);
+    const el = cell.querySelector('.knob');
+    knobEls[k.id] = el;
+    let startY = 0, startV = 0, dragging = false;
+    el.addEventListener('pointerdown', (e) => { dragging = true; startY = e.clientY; startV = knobState[k.id]; el.setPointerCapture(e.pointerId); e.preventDefault(); });
+    el.addEventListener('pointermove', (e) => { if (dragging) setKnob(k.id, startV + (startY - e.clientY) / (e.shiftKey ? 600 : 180)); });
+    const end = () => { dragging = false; store.set('knobs', knobState); };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    el.addEventListener('dblclick', () => { setKnob(k.id, k.def); end(); });
+    el.addEventListener('keydown', (e) => {
+      const step = { ArrowUp: 0.01, ArrowRight: 0.01, ArrowDown: -0.01, ArrowLeft: -0.01, PageUp: 0.1, PageDown: -0.1 }[e.key];
+      if (step !== undefined) { e.preventDefault(); setKnob(k.id, knobState[k.id] + step); store.set('knobs', knobState); }
+      if (e.key === 'Home') { e.preventDefault(); setKnob(k.id, 0); }
+      if (e.key === 'End') { e.preventDefault(); setKnob(k.id, 1); }
+    });
+  }
+  // the SAW / SQR switch sits in the eighth cell
+  const sw = document.createElement('div');
+  sw.className = 'knobcell';
+  sw.innerHTML = `<div class="switch" role="group" aria-label="Waveform"><button id="wSaw" type="button">Saw</button><button id="wSqr" type="button">Sqr</button></div>
+    <span class="knobval">&nbsp;</span><span class="legend">Waveform</span>`;
+  knobsEl.appendChild(sw);
+
+  function drawKnob(id) {
+    const v = knobState[id], el = knobEls[id];
+    el.querySelector('.ptr').setAttribute('transform', `rotate(${START + SWEEP * v} 50 50)`);
+    el.querySelector('.arc').setAttribute('d', arcPath(v));
+    el.setAttribute('aria-valuenow', (v * 10).toFixed(1));
+    $('val-' + id).textContent = (v * 10).toFixed(1);
+  }
+  function setKnob(id, v) {
+    knobState[id] = Math.min(1, Math.max(0, v));
+    drawKnob(id);
+    send({ type: 'knob', name: id, value: knobState[id] });
+  }
+  function setWave(w) {
+    wave = w;
+    $('wSaw').setAttribute('aria-pressed', String(w === 'saw'));
+    $('wSqr').setAttribute('aria-pressed', String(w === 'square'));
+    store.set('wave', w);
+    send({ type: 'knob', name: 'wave', value: w });
+  }
+  $('wSaw').addEventListener('click', () => setWave('saw'));
+  $('wSqr').addEventListener('click', () => setWave('square'));
+
+  // ladder-current meter, log scale 2 to 300 uA
+  const UA_LO = Math.log(2), UA_HI = Math.log(300);
+  const uaPos = (ua) => Math.min(1, Math.max(0, (Math.log(Math.max(ua, 2)) - UA_LO) / (UA_HI - UA_LO)));
+  $('uaTicks').innerHTML = [3, 10, 30, 100, 300].map(u => `<span style="left:${(uaPos(u) * 100).toFixed(1)}%">${u}</span>`).join('');
+  $('uaTicks').lastElementChild.style.transform = 'translateX(-100%)';
+
+  // ---------- pattern ----------
+  const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B', 'C'];
+  const blank = () => ({ note: 0, oct: 0, accent: false, slide: false, rest: false });
+  // The study's demo pattern (fullchain.py): semitones above C, accent, slide
+  const STUDY = [[0, 1, 0], [0, 0, 0], [12, 0, 0], [0, 0, 1], [3, 1, 0], [0, 0, 0], [10, 0, 1], [12, 1, 0],
+                 [0, 0, 0], [0, 1, 0], [7, 0, 0], [0, 0, 0], [3, 0, 1], [5, 1, 1], [7, 1, 0], [0, 0, 0]];
+  const LINE = [[0, 0, 0, 0], [0, 0, 0, 1], [12, 1, 1, 0], [0, 0, 0, 0], [3, 0, 0, 0], [0, 0, 0, 1], [3, 1, 0, 0], [5, 0, 1, 0],
+                [7, 0, 0, 0], [0, 1, 0, 0], [10, 0, 0, 1], [0, 0, 0, 0], [8, 1, 1, 0], [7, 0, 0, 0], [12, 0, 0, 0], [0, 1, 0, 0]];
+  const fromStudy = () => STUDY.map(([n, a, s]) => ({ note: n, oct: 0, accent: !!a, slide: !!s, rest: false }));
+  const fromLine = () => LINE.map(([n, a, s, r]) => ({ note: n, oct: n === 12 ? 0 : 0, accent: !!a, slide: !!s, rest: !!r }));
+  let steps = store.get('steps', null);
+  if (!Array.isArray(steps) || steps.length !== 16) steps = fromStudy();
+  let sel = 0, playing = false, current = -1;
+
+  const stepsEl = $('steps');
+  const stepEls = [];
+  for (let i = 0; i < 16; i++) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'step';
+    b.setAttribute('aria-label', `Step ${i + 1}`);
+    b.innerHTML = `<span class="led"></span><span class="note"></span><span class="marks"></span><span class="num">${i + 1}</span>`;
+    b.addEventListener('click', () => { sel = i; render(); });
+    stepsEl.appendChild(b);
+    stepEls.push(b);
+  }
+  const keysEl = $('keys');
+  const keyEls = [];
+  const whites = [0, 2, 4, 5, 7, 9, 11, 12];
+  NAMES.forEach((n, i) => {
+    const k = document.createElement('button');
+    k.type = 'button';
+    const isW = whites.includes(i);
+    k.className = 'key ' + (isW ? 'w' : 'b');
+    const wi = whites.indexOf(i);
+    const ww = 100 / whites.length;
+    if (isW) { k.style.left = `${wi * ww}%`; k.style.width = `${ww}%`; }
+    else { const prev = whites.filter(x => x < i).length; k.style.left = `${prev * ww - ww * 0.32}%`; k.style.width = `${ww * 0.64}%`; }
+    k.textContent = i === 12 ? "C'" : n;
+    k.setAttribute('aria-label', i === 12 ? 'C, octave up' : n);
+    k.addEventListener('click', () => setNote(i));
+    keysEl.appendChild(k);
+    keyEls.push(k);
+  });
+
+  function render() {
+    steps.forEach((s, i) => {
+      const b = stepEls[i];
+      b.classList.toggle('sel', i === sel);
+      b.classList.toggle('rest', s.rest);
+      b.classList.toggle('playing', i === current);
+      const name = s.rest ? '–' : (s.note === 12 ? 'C' : NAMES[s.note]);
+      b.querySelector('.note').textContent = name;
+      const hi = s.note === 12 ? 1 : 0;
+      const oc = s.oct + hi;
+      b.querySelector('.marks').innerHTML = (oc > 0 ? '<b>↑' + (oc > 1 ? '2' : '') + '</b>' : oc < 0 ? '<b>↓</b>' : '') +
+        (s.accent ? '<b class="acc">A</b>' : '') + (s.slide && !s.rest ? '<b class="sl">S</b>' : '');
+      b.setAttribute('aria-pressed', String(i === sel));
+    });
+    const s = steps[sel];
+    keyEls.forEach((k, i) => k.classList.toggle('on', !s.rest && s.note === i));
+    $('octDown').setAttribute('aria-pressed', String(s.oct < 0));
+    $('octUp').setAttribute('aria-pressed', String(s.oct > 0));
+    $('rest').setAttribute('aria-pressed', String(s.rest));
+    $('accent').setAttribute('aria-pressed', String(s.accent));
+    $('slide').setAttribute('aria-pressed', String(s.slide));
+  }
+  function commit() { store.set('steps', steps); send({ type: 'pattern', steps }); render(); }
+  function setNote(n) {
+    const s = steps[sel];
+    s.note = n; s.rest = false;
+    if (!playing) audition(s);
+    sel = (sel + 1) % 16;
+    commit();
+  }
+  $('octDown').addEventListener('click', () => { const s = steps[sel]; s.oct = s.oct < 0 ? 0 : -1; commit(); });
+  $('octUp').addEventListener('click', () => { const s = steps[sel]; s.oct = s.oct > 0 ? 0 : 1; commit(); });
+  $('rest').addEventListener('click', () => { const s = steps[sel]; s.rest = !s.rest; commit(); });
+  $('accent').addEventListener('click', () => { const s = steps[sel]; s.accent = !s.accent; commit(); });
+  $('slide').addEventListener('click', () => { const s = steps[sel]; s.slide = !s.slide; commit(); });
+  $('presetStudy').addEventListener('click', () => { steps = fromStudy(); commit(); });
+  $('presetLine').addEventListener('click', () => { steps = fromLine(); commit(); });
+  $('presetClear').addEventListener('click', () => { steps = Array.from({ length: 16 }, blank); commit(); });
+
+  // tempo
+  let bpm = store.get('bpm', 120);
+  function setBpm(v) {
+    bpm = Math.round(Math.min(200, Math.max(60, Number(v) || 120)));
+    $('bpm').value = bpm;
+    store.set('bpm', bpm);
+    send({ type: 'tempo', bpm });
+  }
+  $('bpm').addEventListener('change', (e) => setBpm(e.target.value));
+  $('bpmDown').addEventListener('click', () => setBpm(bpm - 2));
+  $('bpmUp').addEventListener('click', () => setBpm(bpm + 2));
+
+  // ---------- audio ----------
+  let ctx = null, node = null, starting = null;
+  let os = store.get('os', 4);
+  const loads = [];
+  function send(m) { if (node) node.port.postMessage(m); }
+  function status(t) { $('status').textContent = t; }
+
+  async function loadModule(c) {
+    // dsp.js is the same file the offline checks render. Load it as a blob first, which works
+    // where the page's own origin is not allowed to serve worklet modules, then directly.
+    try {
+      const src = await (await fetch('dsp.js', { cache: 'no-cache' })).text();
+      if (!src.includes('registerProcessor')) throw new Error('dsp.js did not load');
+      const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      await c.audioWorklet.addModule(url);
+      return;
+    } catch (e) { /* fall through */ }
+    await c.audioWorklet.addModule('dsp.js');
+  }
+  async function makeNode() {
+    if (node) { node.port.onmessage = null; node.disconnect(); }
+    node = new AudioWorkletNode(ctx, 'x0x-vcf', { numberOfInputs: 0, outputChannelCount: [2],
+      processorOptions: { os: ctx.sampleRate >= 88200 ? Math.min(os, 2) : os, knobs: { ...knobState }, wave, steps, bpm } });
+    node.connect(ctx.destination);
+    node.port.onmessage = (e) => onState(e.data);
+    for (const k of KNOBS) send({ type: 'knob', name: k.id, value: knobState[k.id] });
+    send({ type: 'knob', name: 'wave', value: wave });
+    send({ type: 'tempo', bpm });
+    send({ type: 'pattern', steps });
+  }
+  async function ensureAudio() {
+    if (ctx) { if (ctx.state !== 'running') await ctx.resume(); return; }
+    if (starting) return starting;
+    starting = (async () => {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC || !('audioWorklet' in AC.prototype)) throw new Error('This browser has no AudioWorklet. Chrome, Firefox and Safari 14.1 or later have it.');
+      ctx = new AC({ latencyHint: 'playback' });
+      await loadModule(ctx);
+      await makeNode();
+      await ctx.resume();
+    })();
+    return starting;
+  }
+  function onState(m) {
+    if (m.type !== 'state') return;
+    if (m.step !== current) { current = m.step; render(); }
+    $('uaBar').style.width = (uaPos(m.ua) * 100).toFixed(1) + '%';
+    $('uaVal').textContent = (m.ua < 10 ? m.ua.toFixed(1) : m.ua.toFixed(0)) + ' µA';
+    loads.push(m.load);
+    if (loads.length > 30) loads.shift();
+  }
+  setInterval(() => {
+    if (!ctx || !loads.length) return;
+    const avg = loads.reduce((a, b) => a + b, 0) / loads.length;
+    status(`${playing ? 'Playing' : 'Stopped'} · ${ctx.sampleRate / 1000} kHz, filter at ${os}x · DSP ${(avg * 100).toFixed(0)} % of the time${avg > 0.6 ? ' — try 2x if it crackles' : ''}`);
+  }, 700);
+
+  function audition(s) {
+    ensureAudio().then(() => send({ type: 'audition', step: s })).catch(err => status(err.message));
+  }
+  $('play').addEventListener('click', async () => {
+    try {
+      await ensureAudio();
+      playing = !playing;
+      send({ type: playing ? 'play' : 'stop' });
+      $('play').textContent = playing ? 'Stop' : 'Play';
+      $('play').setAttribute('aria-pressed', String(playing));
+      if (!playing) { current = -1; render(); }
+    } catch (err) { status(err.message || String(err)); }
+  });
+  $('quality').addEventListener('click', async () => {
+    os = os === 4 ? 2 : 4;
+    store.set('os', os);
+    $('quality').textContent = os + 'x';
+    $('quality').setAttribute('aria-pressed', String(os === 2));
+    if (ctx) { const was = playing; await makeNode(); if (was) send({ type: 'play' }); }
+  });
+  $('quality').textContent = os + 'x';
+  $('quality').setAttribute('aria-pressed', String(os === 2));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); $('play').click(); }
+  });
+
+  for (const k of KNOBS) drawKnob(k.id);
+  setWave(wave);
+  setBpm(bpm);
+  render();
+})();
+</script>
