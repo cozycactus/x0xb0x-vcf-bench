@@ -166,6 +166,20 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
         <button id="presetClear" type="button">Clear</button>
       </div>
     </div>
+    <div class="transport" role="group" aria-label="Goa patterns">
+      <span class="small">Goa, in E, 145 BPM:</span>
+      <button id="goaRoll" type="button">Goa roll</button>
+      <button id="goaGallop" type="button">Gallop</button>
+      <button id="goaAcid" type="button">Goa acid</button>
+      <button id="goaSquelch" type="button">Squelch</button>
+    </div>
+    <div class="transport" role="group" aria-label="Goa lead lines">
+      <span class="small">Goa leads, also brighten the sound:</span>
+      <button id="leadSunrise" type="button">Sunrise</button>
+      <button id="leadCall" type="button">Call</button>
+      <button id="leadSpiral" type="button">Spiral</button>
+      <button id="leadTemple" type="button">Temple</button>
+    </div>
     <div class="steps" id="steps"></div>
     <div class="editor">
       <div class="keys" id="keys" aria-label="Note for the selected step"></div>
@@ -413,6 +427,41 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   $('presetStudy').addEventListener('click', () => { steps = fromStudy(); commit(); });
   $('presetLine').addEventListener('click', () => { steps = fromLine(); commit(); });
   $('presetClear').addEventListener('click', () => { steps = Array.from({ length: 16 }, blank); commit(); });
+
+  // Goa patterns written for this page: E phrygian and E harmonic minor, sixteenths. A token is a
+  // note name, then ' for each octave up or , for one down, then a (accent) and s (slide); - is a
+  // rest. The range is C one octave below the kit's C1 to C two octaves above it.
+  const NOTE = { C: 0, 'C#': 1, D: 2, 'D#': 3, E: 4, F: 5, 'F#': 6, G: 7, 'G#': 8, A: 9, 'A#': 10, B: 11 };
+  const GOA = {
+    goaRoll: "- Ea E E   - Ea E E   - Ea E E'   - Fa E G",          // rolling bass, the kick's place left empty
+    goaGallop: "Ea - E E   Ea - E E'   Ga - F E   Ea - D' E's",     // note, rest, note, note
+    goaAcid: "Ea E' F Es   G Ea F's E'   D' B C's B   Ga Fs E E'a",  // a lead line with octave jumps
+    goaSquelch: "Eas F E E'a   D#s E F's E   Eas G E A#'s   B Ea F's E",  // semitone rubs on slides
+  };
+  const LEADS = {
+    leadSunrise: "E'a G' B' E'   D#'a E' F#' G'   A'a G' F#' E'   D#'s E' B'a G'",       // harmonic minor arpeggio
+    leadCall: "E'a - F's E'   G'a F's E' -   B'a C''s B' G'   F'a E's D' E'",           // call and answer
+    leadSpiral: "E'a G' B'  E'a G' B'  E'a G' C''  E'a G' C''  B's A' G' F#'",          // three notes against four
+    leadTemple: "E's E' G's G'   F#'as F#' E' -   D#'s D#' E's F#'   G'as F#'s E' -",   // tied with slides into the same note
+  };
+  // a lead wants the filter open, a longer decay, and more delay and room
+  const LEAD_SOUND = { cut: 0.55, res: 0.75, env: 0.45, decay: 0.45, acc: 0.7, delay: 0.45, time: 0.4, fdbk: 0.5, space: 0.6, size: 0.6 };
+  function parsePattern(txt) {
+    return txt.trim().split(/\s+/).map((tok) => {
+      if (tok === '-') return { ...blank(), rest: true };
+      const m = /^([A-G]#?)('{0,2}|,?)([as]*)$/.exec(tok);
+      if (!m) return blank();
+      const semis = NOTE[m[1]] + 12 * (m[2] === ',' ? -1 : m[2].length);   // above the kit's C1
+      const oct = semis >= 24 ? 1 : Math.max(-1, Math.floor(semis / 12));
+      return { note: semis - 12 * oct, oct, accent: m[3].includes('a'), slide: m[3].includes('s'), rest: false };
+    });
+  }
+  for (const id of Object.keys(GOA)) $(id).addEventListener('click', () => { steps = parsePattern(GOA[id]); commit(); setBpm(145); });
+  for (const id of Object.keys(LEADS)) $(id).addEventListener('click', () => {
+    steps = parsePattern(LEADS[id]); commit(); setBpm(145);
+    for (const [k, v] of Object.entries(LEAD_SOUND)) setKnob(k, v);
+    store.set('knobs', knobState);
+  });
 
   // tempo
   let bpm = store.get('bpm', 120);
