@@ -74,12 +74,14 @@ const FIT = {
   // VCA control current (reference, Accent 0): a step 5.63 ms after the first gate, 4.74 ms
   // 187.5 ms after the last gate fell and 2.47 ms 62.5 ms after it; 94 % at once, the rest
   // with 3.1 ms; 62.1 uA at 20 ms, decaying with 2.29 s; after the gate, half at 7.7 ms.
+  // The step itself grows exponentially, doubling about every 0.13 ms, for 0.7 ms (a whole-
+  // chain run sampled every 10 us), and half the step falls at the delays above.
   VEG_I0: 62.65e-6, VEG_TAU: 2.29,
   VEG_DELAY: 5.63e-3, VEG_DELAY_RECOVER: 5.96e-3, VEG_RECOVER_TAU: 0.1, VEG_DELAY_MIN: 0.3e-3,
-  VEG_STEP: 0.942, VEG_RISE_TAU: 3.1e-3,
+  VEG_STEP: 0.942, VEG_RISE_TAU: 3.1e-3, VEG_RAMP: 0.70e-3, VEG_RAMP_TAU: 0.19e-3,
   VEG_OFF_HALF: 7.75e-3, VEG_OFF_POW: 5,
-  MIRROR: 1.224,      // Q1-Q4 mirror gain with Early effect: accent peaks 210.8 and 115.2 uA (reference)
-  G_MIX: 1.5645,      // mixer gain to the line out: line Vpp of the reference runs
+  MIRROR: 1.221,      // Q1-Q4 mirror gain with Early effect: accent peaks 210.8 and 115.2 uA (reference)
+  G_MIX: 1.557,       // mixer gain to the line out: line Vpp of the reference runs
   // Square from Q8 (reference, four pitches): saw level at the rising edge against pitch,
   // low level, top that droops toward SQ_VINF, and a rising edge 1.4 % of a period long.
   SQ_LOW: 5.375, SQ_START: 8.90, SQ_VINF: 7.07, SQ_TAU: 8.83e-3, SQ_RISE_PHASE: 0.014,
@@ -88,6 +90,9 @@ const FIT = {
 
 const SAW_HI = 11.25, SAW_LO = 5.75;  // ideal saw of the study: 5.5 Vpp on 8.5 V, falling ramp
 const I117 = (PART.VREF - 0.512) / PART.R117;  // bias of D26, the bottom of the MEG's diode stack
+// Line-output volts that make digital full scale. The study's demo pattern peaks near -10 dBFS;
+// Volume 10 with Accent 10 goes past it and into the soft limit.
+const LINE_FS = 6;
 
 /** Audio taper assumed by the study: 20 % of the track at half rotation. */
 function taperA(x) {
@@ -409,7 +414,8 @@ class X0xVoice {
         this.strikeLeft = f.T_STRIKE;
         const delay = Math.max(f.VEG_DELAY_MIN, f.VEG_DELAY - f.VEG_DELAY_RECOVER * Math.exp(-(t - this.lastOff) / f.VEG_RECOVER_TAU));
         this.vegPrev = this.veg;
-        this.veg = { tOn: t, tOff: 1e9, start: t + delay };
+        // the ramp starts so that it is half way at the delay
+        this.veg = { tOn: t, tOff: 1e9, start: t + delay - (f.VEG_RAMP + f.VEG_RAMP_TAU * Math.log(0.5)) };
       }
       if (!value && this.gate) { this.veg.tOff = this.time; this.lastOff = this.time; }
       this.gate = value ? 1 : 0;
@@ -536,7 +542,8 @@ class X0xVoice {
   _vegLevel(n, t) {
     if (t < n.start) return 0;
     const f = this.fit, ts = t - n.start;
-    const on = (1 - (1 - f.VEG_STEP) * Math.exp(-ts / f.VEG_RISE_TAU)) * (1 - Math.exp(-ts / 1e-4));
+    const tr = ts - f.VEG_RAMP;
+    const on = tr < 0 ? f.VEG_STEP * Math.exp(tr / f.VEG_RAMP_TAU) : 1 - (1 - f.VEG_STEP) * Math.exp(-tr / f.VEG_RISE_TAU);
     const off = t > n.tOff ? 1 / (1 + Math.pow((t - n.tOff) / f.VEG_OFF_HALF, f.VEG_OFF_POW)) : 1;
     return f.VEG_I0 * on * off * Math.exp(-(t - n.tOn) / f.VEG_TAU);
   }
@@ -687,7 +694,7 @@ class X0xVoice {
     this._updateNet();
     this._updateKnobs();
     const os = this.os, fir = this.fir, ring = this.ring, NF = fir.length;
-    const volG = taperA(this.knob.vol) * this.fit.G_MIX / 4;  // line volts / 4 -> full scale
+    const volG = taperA(this.knob.vol) * this.fit.G_MIX / LINE_FS;
     for (let i = 0; i < n; i++) {
       while (this.events.length && this.events[0].n <= this.sampleIndex) {
         const ev = this.events.shift();
@@ -716,7 +723,9 @@ class X0xVoice {
       const lp = vv + this.s38;
       this.s38 = lp + vv;
       const y = (acc - lp) * volG;
-      out[i] = y > 0.95 || y < -0.95 ? Math.tanh(y) : y;
+      // soft limit above 0.7 of full scale: continuous, and with the same slope at the knee
+      const ay = Math.abs(y);
+      out[i] = ay <= 0.7 ? y : Math.sign(y) * (0.7 + 0.3 * Math.tanh((ay - 0.7) / 0.3));
       if (probes) {
         if (probes.ua) probes.ua[i] = this.IL * 1e6;
         if (probes.vsum) probes.vsum[i] = this.vsum * 1e3;
@@ -866,12 +875,46 @@ class Sequencer {
 
 const api = { X0xVoice, Sequencer, taperA, PART, DEV, FIT, VT, tapNetwork, inputNetwork, discretiseN, transfer, diodeSeries };
 
+/**
+ * Run every path of the code for a moment before the first real block, so the JIT has
+ * compiled it: otherwise the first notes, accents and slides can each take longer than a
+ * block and the output crackles. Takes about 60 ms on a laptop.
+ */
+function warmUp(fs, os) {
+  const v = new X0xVoice(fs, { os });
+  const s = new Sequencer(v);
+  s.steps = [{ note: 0, oct: 0, accent: true, slide: false, rest: false }, { note: 12, oct: 0, accent: false, slide: true, rest: false },
+    { note: 3, oct: 1, accent: true, slide: true, rest: false }, { note: 0, oct: -1, accent: false, slide: false, rest: true }];
+  s.bpm = 240;
+  s.start(0);
+  const buf = new Float32Array(128);
+  const n = Math.ceil(0.6 * fs / 128);
+  for (let b = 0; b < n; b++) {
+    if (b === n >> 1) v.knob.wave = 'square';
+    v.knob.res = 0.5 + 0.5 * Math.sin(b / 9);
+    v.knob.cut = 0.5 + 0.5 * Math.sin(b / 7);
+    v.knob.env = 0.5 + 0.5 * Math.sin(b / 5);
+    s.plan(b * 128, 128);
+    v.process(buf, 128);
+  }
+  s.stop(n * 128);
+  s.audition(n * 128 + 64, s.steps[0]);
+  for (let b = n; b < n + 40; b++) v.process(buf, 128);
+}
+
+const KNOB_NAMES = ['cut', 'res', 'env', 'decay', 'acc', 'tune', 'vol'];
+const clock = () => (globalThis.performance && performance.now ? performance.now() : Date.now());
+
 if (typeof registerProcessor === 'function') {
   class X0xProcessor extends AudioWorkletProcessor {
     constructor(options) {
       super();
       const o = (options && options.processorOptions) || {};
+      warmUp(sampleRate, o.os);
       this.voice = new X0xVoice(sampleRate, { os: o.os });
+      this.budgetMs = 1000 * 128 / sampleRate;
+      this.worstMs = 0;
+      this.late = 0;
       this.seq = new Sequencer(this.voice);
       this.target = { ...this.voice.knob };
       this.frame = 0;
@@ -906,19 +949,23 @@ if (typeof registerProcessor === 'function') {
       const n = out.length;
       const v = this.voice;
       // pots move smoothly, about 10 ms, so a fast turn does not step the ladder current
-      for (const k of ['cut', 'res', 'env', 'decay', 'acc', 'tune', 'vol']) v.knob[k] += (this.target[k] - v.knob[k]) * 0.25;
-      this.seq.plan(this.frame, n);
-      const clock = globalThis.performance && performance.now ? () => performance.now() : () => Date.now();
+      for (let j = 0; j < KNOB_NAMES.length; j++) { const k = KNOB_NAMES[j]; v.knob[k] += (this.target[k] - v.knob[k]) * 0.25; }
       const t0 = clock();
+      this.seq.plan(this.frame, n);
       v.process(out, n);
-      this.busyMs += clock() - t0;
+      const dt = clock() - t0;
+      this.busyMs += dt;
+      if (dt > this.worstMs) this.worstMs = dt;
+      if (dt > this.budgetMs) this.late++;
       for (let c = 1; c < outputs[0].length; c++) outputs[0][c].set(out);
       this.frame += n;
       this.peakUa = Math.max(this.peakUa, v.IL * 1e6);
       this.meterCount += n;
       if (this.seq.current !== this.lastStep || this.meterCount >= this.meterEvery) {
         const load = this.busyMs / (1000 * this.meterCount / sampleRate);
-        this.port.postMessage({ type: 'state', step: this.seq.current, ua: this.peakUa, load });
+        this.port.postMessage({ type: 'state', step: this.seq.current, ua: this.peakUa, load, worstMs: this.worstMs, late: this.late });
+        this.worstMs = 0;
+        this.late = 0;
         this.lastStep = this.seq.current;
         this.meterCount = 0;
         this.busyMs = 0;

@@ -169,7 +169,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
         <button id="quality" type="button" aria-pressed="false" title="Oversampling of the filter">4x</button>
       </div>
     </div>
-    <div class="small">Tap a step, then a key. A key sets the note and moves to the next step; with the sequencer stopped it also plays the note once.</div>
+    <div class="small">Tap a step, then a key. A key sets the note and moves to the next step; with the sequencer stopped it also plays the note once. If it crackles, set 4x to 2x: the filter then runs at half the rate and needs about half the processor.</div>
   </section>
 
   <section class="board notes" aria-label="About the model">
@@ -403,6 +403,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   let ctx = null, node = null, starting = null;
   let os = store.get('os', 4);
   const loads = [];
+  let lateTotal = 0, lateSince = 0, playStart = 0, fallback = false;
   function send(m) { if (node) node.port.postMessage(m); }
   function status(t) { $('status').textContent = t; }
 
@@ -449,11 +450,17 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     $('uaVal').textContent = (m.ua < 10 ? m.ua.toFixed(1) : m.ua.toFixed(0)) + ' µA';
     loads.push(m.load);
     if (loads.length > 30) loads.shift();
+    // blocks that took longer than real time are what you hear as crackle
+    lateTotal += m.late;
+    if (playing && performance.now() - playStart > 3000) lateSince += m.late;
+    if (lateSince >= 4 && os === 4) { lateSince = 0; fallback = true; setOs(2); }
   }
   setInterval(() => {
     if (!ctx || !loads.length) return;
     const avg = loads.reduce((a, b) => a + b, 0) / loads.length;
-    status(`${playing ? 'Playing' : 'Stopped'} · ${ctx.sampleRate / 1000} kHz, filter at ${os}x · DSP ${(avg * 100).toFixed(0)} % of the time${avg > 0.6 ? ' — try 2x if it crackles' : ''}`);
+    status(`${playing ? 'Playing' : 'Stopped'} · ${ctx.sampleRate / 1000} kHz, filter at ${os}x · DSP ${(avg * 100).toFixed(0)} % of the time` +
+      (lateTotal ? ` · ${lateTotal} late block${lateTotal > 1 ? 's' : ''}` : '') +
+      (fallback ? ' · switched to 2x because this device fell behind at 4x' : ''));
   }, 700);
 
   function audition(s) {
@@ -463,19 +470,21 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     try {
       await ensureAudio();
       playing = !playing;
+      if (playing) { playStart = performance.now(); lateSince = 0; }
       send({ type: playing ? 'play' : 'stop' });
       $('play').textContent = playing ? 'Stop' : 'Play';
       $('play').setAttribute('aria-pressed', String(playing));
       if (!playing) { current = -1; render(); }
     } catch (err) { status(err.message || String(err)); }
   });
-  $('quality').addEventListener('click', async () => {
-    os = os === 4 ? 2 : 4;
+  async function setOs(n) {
+    os = n;
     store.set('os', os);
     $('quality').textContent = os + 'x';
     $('quality').setAttribute('aria-pressed', String(os === 2));
-    if (ctx) { const was = playing; await makeNode(); if (was) send({ type: 'play' }); }
-  });
+    if (ctx) { await makeNode(); if (playing) { playStart = performance.now(); send({ type: 'play' }); } }
+  }
+  $('quality').addEventListener('click', () => { fallback = false; setOs(os === 4 ? 2 : 4); });
   $('quality').textContent = os + 'x';
   $('quality').setAttribute('aria-pressed', String(os === 2));
 
