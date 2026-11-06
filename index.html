@@ -149,10 +149,10 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     <div class="small status" id="status">Press Play. Sound starts after the first press, as browsers require.</div>
   </section>
 
-  <section class="board" aria-label="Space reverb">
+  <section class="board" aria-label="Delay and reverb">
     <div class="fxhead">
-      <span class="legend">Space</span>
-      <span class="small">A reverb added on this page. The x0xb0x has none, and the checks against the study leave it out.</span>
+      <span class="legend">Delay and space</span>
+      <span class="small">Effects added on this page. The x0xb0x has neither, and the checks against the study leave them out.</span>
     </div>
     <div class="knobs" id="fxknobs"></div>
   </section>
@@ -230,14 +230,20 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     { id: 'acc', label: 'Accent', def: 0.8 },
     { id: 'vol', label: 'Volume', def: 0.75 },
   ];
-  // the reverb's knobs: not part of the circuit
+  // the delay's and the reverb's knobs: not part of the circuit
+  const DIVS = [[1, '1/16'], [2, '1/8'], [3, '3/16'], [4, '1/4'], [6, '3/8'], [8, '1/2']];   // sixteenths
+  const divOf = (v) => DIVS[Math.round(v * (DIVS.length - 1))];
   const FX = [
+    { id: 'delay', label: 'Delay', def: 0.3 },
+    { id: 'time', label: 'Time', def: 0.4, fmt: (v) => divOf(v)[1] },
+    { id: 'fdbk', label: 'Feed\u00adback', def: 0.4 },
     { id: 'space', label: 'Space', def: 0.5 },
-    { id: 'size', label: 'Size', def: 0.55 },
+    { id: 'size', label: 'Size', def: 0.55, fmt: (v) => (1.2 * Math.pow(10, v)).toFixed(1) + ' s' },
     { id: 'tone', label: 'Tone', def: 0.5 },
   ];
   const isFx = (id) => FX.some(k => k.id === id);
   const knobState = Object.assign(Object.fromEntries([...KNOBS, ...FX].map(k => [k.id, k.def])), store.get('knobs', {}));
+  const KNOB_DEF = Object.fromEntries([...KNOBS, ...FX].map(k => [k.id, k]));
   let wave = store.get('wave', 'saw');
   const SWEEP = 300, START = -150;   // degrees, 0 at twelve o'clock
 
@@ -297,13 +303,15 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     const v = knobState[id], el = knobEls[id];
     el.querySelector('.ptr').setAttribute('transform', `rotate(${START + SWEEP * v} 50 50)`);
     el.querySelector('.arc').setAttribute('d', arcPath(v));
+    const shown = KNOB_DEF[id].fmt ? KNOB_DEF[id].fmt(v) : (v * 10).toFixed(1);
     el.setAttribute('aria-valuenow', (v * 10).toFixed(1));
-    $('val-' + id).textContent = (v * 10).toFixed(1);
+    el.setAttribute('aria-valuetext', shown);
+    $('val-' + id).textContent = shown;
   }
   function setKnob(id, v) {
     knobState[id] = Math.min(1, Math.max(0, v));
     drawKnob(id);
-    if (isFx(id)) updateReverb(id);
+    if (isFx(id)) updateFx(id);
     else send({ type: 'knob', name: id, value: knobState[id] });
   }
   function setWave(w) {
@@ -413,6 +421,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     $('bpm').value = bpm;
     store.set('bpm', bpm);
     send({ type: 'tempo', bpm });
+    setDelay(false);   // the echoes follow the tempo
   }
   $('bpm').addEventListener('change', (e) => setBpm(e.target.value));
   $('bpmDown').addEventListener('click', () => setBpm(bpm - 2));
@@ -425,9 +434,11 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   let lateTotal = 0, lateSince = 0, playStart = 0, fallback = false;
   function send(m) { if (node) node.port.postMessage(m); }
 
-  // ---------- the Space reverb (Web Audio, outside the model) ----------
-  // dry and a send from the voice; the send is high-passed, delayed 35 ms and convolved with a
-  // generated stereo tail; a soft limiter on the sum keeps big settings off the rails
+  // ---------- the delay and the reverb (Web Audio, outside the model) ----------
+  // dry, a delay send and a reverb send from the voice. The delay is a ping-pong pair synced to
+  // the tempo, each repeat through a 250 Hz to 3.5 kHz band so it darkens, and its echoes go to
+  // the reverb too. The reverb send is high-passed, delayed 35 ms and convolved with a generated
+  // stereo tail. A soft limiter on the sum keeps big settings off the rails.
   let fx = null;
   const rt60 = () => 1.2 * Math.pow(10, knobState.size);           // 1.2 s to 12 s
   function makeTail(c) {
@@ -458,9 +469,31 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     const dry = c.createGain(), send = c.createGain(), hp = c.createBiquadFilter(), pre = c.createDelay(0.2);
     hp.type = 'highpass'; hp.frequency.value = 160; pre.delayTime.value = 0.035;
     dry.connect(master); send.connect(hp); hp.connect(pre);
-    fx = { c, master, dry, send, pre, conv: null, out: null, timer: 0 };
+    const dsend = c.createGain(), dhp = c.createBiquadFilter(), dl = c.createDelay(2.5), dr = c.createDelay(2.5);
+    const fbLR = c.createGain(), fbRL = c.createGain(), merge = c.createChannelMerger(2), dout = c.createGain();
+    dhp.type = 'highpass'; dhp.frequency.value = 120;
+    const band = (from, to) => {
+      const h = c.createBiquadFilter(), l = c.createBiquadFilter();
+      h.type = 'highpass'; h.frequency.value = 250; l.type = 'lowpass'; l.frequency.value = 3500;
+      from.connect(h); h.connect(l); l.connect(to);
+    };
+    dsend.connect(dhp); dhp.connect(dl);
+    band(dl, fbLR); fbLR.connect(dr);          // left echo feeds the right
+    band(dr, fbRL); fbRL.connect(dl);          // and the right feeds the left
+    dl.connect(merge, 0, 0); dr.connect(merge, 0, 1);
+    merge.connect(dout); dout.connect(master); dout.connect(send);
+    fx = { c, master, dry, send, pre, conv: null, out: null, timer: 0, dsend, dl, dr, fbLR, fbRL };
     swapTail();
     setWet(true);
+    setDelay(true);
+  }
+  function setDelay(now) {
+    if (!fx) return;
+    const t = fx.c.currentTime, T = divOf(knobState.time)[0] * 60 / bpm / 4;
+    const mix = 0.9 * Math.pow(knobState.delay, 1.2), fb = 0.85 * knobState.fdbk;
+    const set = (prm, v, tc) => { if (now) prm.value = v; else prm.setTargetAtTime(v, t, tc); };
+    set(fx.dl.delayTime, T, 0.05); set(fx.dr.delayTime, T, 0.05);   // a tempo change glides, like tape
+    set(fx.dsend.gain, mix, 0.02); set(fx.fbLR.gain, fb, 0.02); set(fx.fbRL.gain, fb, 0.02);
   }
   function setWet(now) {
     if (!fx) return;
@@ -485,10 +518,11 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     }
     fx.conv = conv; fx.out = out;
   }
-  function updateReverb(id) {
+  function updateFx(id) {
     store.set('knobs', knobState);
     if (!fx) return;
     if (id === 'space') setWet(false);
+    else if (id === 'delay' || id === 'time' || id === 'fdbk') setDelay(false);
     else { clearTimeout(fx.timer); fx.timer = setTimeout(swapTail, 150); }
   }
   function status(t) { $('status').textContent = t; }
@@ -511,6 +545,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
       processorOptions: { os: ctx.sampleRate >= 88200 ? Math.min(os, 2) : os, knobs: { ...knobState }, wave, steps, bpm } });
     node.connect(fx.dry);
     node.connect(fx.send);
+    node.connect(fx.dsend);
     node.port.onmessage = (e) => onState(e.data);
     for (const k of KNOBS) send({ type: 'knob', name: k.id, value: knobState[k.id] });
     send({ type: 'knob', name: 'wave', value: wave });
