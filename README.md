@@ -8,7 +8,9 @@ The model copies an ngspice simulation of one x0xb0x build's KiCad schematic, wh
 
 ## Playing
 
-Press Play, then drag the knobs up and down (arrow keys work too; double-click resets a knob). Tap a step and then a key to set its note; Down, Up, Rest, Accent and Slide change the selected step. The Preset list holds 30 patterns written for the page: 20 in the classic acid style at 118 to 132 BPM, four Goa bass lines and four Goa leads in E at 145 BPM (the leads also brighten the sound), and two from the simulation study. None copies a record. If a slow phone crackles, switch "4x" to "2x".
+Press Play, then drag the knobs up and down (arrow keys work too; double-click resets a knob). Tap a step and then a key to set its note; Down, Up, Rest, Accent and Slide change the selected step. The Circuit panel swaps parts of the board while you play: Q21's hFE, the resonance feedback resistor R97, and the Cutoff pot's taper. A line under it shows the filter's peak, Q and loop margin for the chosen parts.
+
+The Preset list holds 30 patterns written for the page: 20 in the classic acid style at 118 to 132 BPM, four Goa bass lines and four Goa leads in E at 145 BPM (the leads also brighten the sound), and two from the simulation study. None copies a record. If a slow phone crackles, switch "4x" to "2x".
 
 The Effects panel adds a distortion (Drive, Color; Drive 0 is off), a tempo-synced ping-pong delay (Delay, Time, Feedback) and a reverb (Space, Size, Tone). The x0xb0x has none of them; the model of the circuit is `dsp.js`, and the effects sit outside it.
 

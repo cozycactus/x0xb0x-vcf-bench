@@ -94,10 +94,10 @@ const I117 = (PART.VREF - 0.512) / PART.R117;  // bias of D26, the bottom of the
 // Volume 10 with Accent 10 goes past it and into the soft limit.
 const LINE_FS = 6;
 
-/** Audio taper assumed by the study: 20 % of the track at half rotation. */
-function taperA(x) {
+/** Audio taper assumed by the study: t (20 %) of the track at half rotation. */
+function taperA(x, t = 0.2) {
   x = Math.min(Math.max(x, 0), 1);
-  return x <= 0.5 ? 0.4 * x : 0.2 + 1.6 * (x - 0.5);
+  return x <= 0.5 ? 2 * t * x : t + 2 * (1 - t) * (x - 0.5);
 }
 
 /** The two halves of a pot, as the deck makes them (never below 1 ohm). */
@@ -309,7 +309,7 @@ class X0xVoice {
     this.os = opt.os || (fs >= 88200 ? 2 : 4);
     this.h = 1 / (fs * this.os);
     this.hHost = 1 / fs;
-    this.opt = { d27: true, d24: true, fbMult: 1, hfe21: DEV.HFE21, inputScale: 1, megHold: null, ...opt };
+    this.opt = { d27: true, d24: true, fbMult: 1, hfe21: DEV.HFE21, inputScale: 1, megHold: null, cutTaper: 0.2, ...opt };
     this.knob = { cut: 0.5, res: 0.5, env: 0.5, decay: 0.5, acc: 0.5, tune: 0.5, vol: 0.75, wave: 'saw' };
     this.fit = { ...FIT, ...(opt.fit || {}) };
     this.P = { ...PART, ...(opt.part || {}) };
@@ -317,7 +317,36 @@ class X0xVoice {
     this.reset();
   }
 
+  /**
+   * Change the parts the page offers to try, while playing: Q21's hFE, R97 (the feedback
+   * divider with R98), and the Cutoff pot's taper (its track fraction at half rotation).
+   */
+  setCircuit({ hfe21, r97, cutTaper } = {}) {
+    if (hfe21) this.opt.hfe21 = hfe21;
+    if (r97) this.P.R97 = r97;
+    if (cutTaper && cutTaper !== this.opt.cutTaper) {
+      // A builder trims TM3 for the kit's 500 Hz at Cutoff 50 %, so with another taper TM3 is
+      // retrimmed to give the same R73 current there; the top of the knob then moves.
+      const P = this.P, V147 = PART.V561 + this.fit.VEB10;
+      const at = (t) => {
+        const [Ras, Rse] = potHalves(P.VR3, t), r3 = Ras + P.R47, Rp = 1 / (1 / r3 + 1 / Rse);
+        return [(PART.V561 / r3 + 12 / Rse) * Rp, Rp];
+      };
+      const [V0, Rp0] = at(this.opt.cutTaper), [V1, Rp1] = at(cutTaper);
+      P.TM3 = (V1 - V147) * (Rp0 + P.TM3 + P.R73) / (V0 - V147) - Rp1 - P.R73;
+      this.opt.cutTaper = cutTaper;
+    }
+    this._setupLoop();
+    this._updateKnobs();
+  }
+
   _setupConstants() {
+    this._setupLoop();
+    this._setupOutput();
+  }
+
+  /** The feedback loop's constants. The states stay: they are capacitor voltages. */
+  _setupLoop() {
     const P = this.P;
     const o = this.opt;
     this.R97 = (P.R97 + P.R98) / o.fbMult - P.R98;
@@ -330,9 +359,13 @@ class X0xVoice {
     this.G25 = g(this.Rin * P.C25);
     this.inNet = inputNetwork(P, this.R62, this.R97);
     this.inD = discretiseN(this.inNet, this.h);
+    this._netRes = -1;
+  }
+
+  _setupOutput() {
+    const P = this.P;
     const gh = this.hHost / (2 * P.C38 * P.VR8);
     this.G38 = gh / (1 + gh);
-    this._netRes = -1;
     // decimation FIR: windowed sinc at the oversampled rate, cutoff 0.45 * fs host
     const N = this.os === 1 ? 1 : 16 * this.os + 1;
     this.fir = new Float64Array(N);
@@ -447,7 +480,7 @@ class X0xVoice {
     c.Rse5 = Rse5;
     c.Rp5 = 1 / (1 / c.r1 + 1 / Rse5);
     c.Rt5 = c.Rp5 + P.R63;
-    const [Ras3, Rse3] = potHalves(P.VR3, taperA(k.cut));
+    const [Ras3, Rse3] = potHalves(P.VR3, taperA(k.cut, this.opt.cutTaper));
     c.r3 = Ras3 + P.R47;
     c.Rse3 = Rse3;
     c.Rp3 = 1 / (1 / c.r3 + 1 / Rse3);
@@ -928,6 +961,7 @@ if (typeof registerProcessor === 'function') {
       if (o.wave) this.voice.knob.wave = o.wave;
       if (o.steps) this.seq.steps = o.steps;
       if (o.bpm) this.seq.bpm = o.bpm;
+      if (o.circuit) this.voice.setCircuit(o.circuit);
       if (o.play) this.seq.start(64);
       this.port.onmessage = (e) => this.onMessage(e.data);
     }
@@ -942,6 +976,7 @@ if (typeof registerProcessor === 'function') {
       else if (m.type === 'play') this.seq.start(this.frame + 64);
       else if (m.type === 'stop') this.seq.stop(this.frame);
       else if (m.type === 'audition') this.seq.audition(this.frame + 64, m.step);
+      else if (m.type === 'circuit') v.setCircuit(m);
     }
 
     process(inputs, outputs) {

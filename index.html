@@ -72,6 +72,10 @@ button[aria-pressed="true"] { background: var(--gold-soft); border-color: var(--
 .switch { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 92px; margin-top: 6px; }
 .switch button { min-height: 34px; padding: 6px 0; }
 .fxhead { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.circuit { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; }
+.ctl { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cread { font: 13px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); min-height: 2.6em; }
+.cread.osc { color: var(--led); }
 /* ladder meter */
 .meter { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; }
 .meter .bar, .meter .ticks { grid-column: 1 / -1; }
@@ -119,6 +123,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   .steps { grid-template-columns: repeat(8, minmax(0, 1fr)); }
   .editor { grid-template-columns: minmax(0, 1fr); }
   .notes { grid-template-columns: minmax(0, 1fr); }
+  .circuit { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
 </style>
@@ -149,6 +154,31 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
       <div class="ticks" id="uaTicks" aria-hidden="true"></div>
     </div>
     <div class="small status" id="status">Press Play. Sound starts after the first press, as browsers require.</div>
+  </section>
+
+  <section class="board" aria-label="Circuit">
+    <div class="fxhead">
+      <span class="legend">Circuit</span>
+      <span class="small">Parts of the board to try. The model was checked against the study on each of these.</span>
+    </div>
+    <div class="circuit">
+      <label class="ctl" for="cHfe"><span class="small">Q21 hFE, the part that moves the resonance most</span>
+        <select id="cHfe">
+          <option value="100">100</option><option value="150">150</option><option value="200">200</option>
+          <option value="250">250, the datasheet minimum</option><option value="400">400, the study's baseline</option>
+          <option value="800">800, the datasheet maximum</option>
+        </select></label>
+      <label class="ctl" for="cR97"><span class="small">R97, the resonance feedback</span>
+        <select id="cR97">
+          <option value="22000">22K, about half</option><option value="10000">10K, stock</option>
+          <option value="3900">3.9K, double, as the Devil Fish</option>
+        </select></label>
+      <label class="ctl" for="cTaper"><span class="small">Cutoff pot taper, TM3 retrimmed to 500 Hz</span>
+        <select id="cTaper">
+          <option value="0.2">20 % at half turn, the study's guess</option><option value="0.1">10 % at half turn</option>
+        </select></label>
+    </div>
+    <div class="cread" id="cRead" aria-live="polite"></div>
   </section>
 
   <section class="board" aria-label="Effects">
@@ -213,6 +243,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   </section>
 </div>
 
+<script src="dsp.js"></script>
 <script>
 (() => {
   'use strict';
@@ -317,6 +348,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     drawKnob(id);
     if (isFx(id)) updateFx(id);
     else send({ type: 'knob', name: id, value: knobState[id] });
+    if (id === 'cut' || id === 'res' || id === 'env') scheduleAnalysis();
   }
   function setWave(w) {
     wave = w;
@@ -504,6 +536,63 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   $('bpmDown').addEventListener('click', () => setBpm(bpm - 2));
   $('bpmUp').addEventListener('click', () => setBpm(bpm + 2));
 
+  // ---------- the circuit panel ----------
+  const CIRC_DEF = { hfe21: 400, r97: 10000, cutTaper: 0.2 };
+  const circ = { ...CIRC_DEF, ...store.get('circuit', {}) };
+  const circEls = { hfe21: $('cHfe'), r97: $('cR97'), cutTaper: $('cTaper') };
+  for (const [k, el] of Object.entries(circEls)) {
+    el.value = String(circ[k]);
+    el.addEventListener('change', () => {
+      circ[k] = +el.value;
+      store.set('circuit', circ);
+      send({ type: 'circuit', ...circ });
+      scheduleAnalysis();
+    });
+  }
+  // The same dsp.js, run here without sound: its small-signal analysis at the knobs' resting
+  // point gives the peak, its Q and the loop margin for the chosen parts.
+  let anTimer = 0;
+  function scheduleAnalysis() { clearTimeout(anTimer); anTimer = setTimeout(analyse, 120); }
+  function analyse() {
+    const out = $('cRead');
+    if (typeof X0xVoice === 'undefined') { out.textContent = ''; return; }
+    const v = new X0xVoice(48000, { os: 1 });
+    v.setCircuit(circ);
+    Object.assign(v.knob, { cut: knobState.cut, res: knobState.res, env: knobState.env, decay: knobState.decay, acc: knobState.acc });
+    v._controlInit();
+    const grid = (a, b, k) => { const f = []; for (let x = a; x < b; x *= k) f.push(x); return f; };
+    const mag = (z) => Math.hypot(z[0], z[1]);
+    const coarse = grid(30, 20000, 1.015), rc = v.smallSignal(coarse);
+    let fosc = 0, margin = -Infinity;
+    for (let i = 1; i < rc.length; i++) {
+      const a0 = Math.atan2(rc[i - 1].T[1], rc[i - 1].T[0]), a1 = Math.atan2(rc[i].T[1], rc[i].T[0]);
+      if (coarse[i] > 40 && a0 * a1 <= 0 && Math.abs(a0 - a1) < 1) {
+        const m = 20 * Math.log10(mag(rc[i].T));
+        if (m > margin) { margin = m; fosc = coarse[i]; }
+      }
+    }
+    let ip = 0;
+    rc.forEach((x, i) => { if (coarse[i] > 40 && mag(x.vca) > mag(rc[ip].vca)) ip = i; });
+    // Q from the -3 dB width: on a fine grid around the peak, or the coarse one for a broad peak
+    const qOf = (f, db) => {
+      let jp = 0;
+      db.forEach((d, j) => { if (d > db[jp]) jp = j; });
+      let lo = jp, hi = jp;
+      while (lo > 0 && db[lo] > db[jp] - 3) lo--;
+      while (hi < db.length - 1 && db[hi] > db[jp] - 3) hi++;
+      return [f[jp], lo > 0 && hi < db.length - 1 ? f[jp] / (f[hi] - f[lo]) : null];
+    };
+    const fine = grid(coarse[ip] / 1.6, coarse[ip] * 1.6, 1.002), rf = v.smallSignal(fine);
+    let [fp, q] = qOf(fine, rf.map(x => 20 * Math.log10(mag(x.vca))));
+    if (q === null) q = qOf(coarse, rc.map(x => 20 * Math.log10(mag(x.vca))))[1];
+    const osc = margin >= 0;
+    out.classList.toggle('osc', osc);
+    out.textContent = osc
+      ? `Between notes at these knobs the loop gain is ${margin.toFixed(1)} dB above unity at ${Math.round(fosc)} Hz: the filter oscillates by itself.`
+      : `Between notes at these knobs: peak ${Math.round(fp)} Hz, Q ${q ? q.toFixed(1) : 'under 1'}, ` +
+        (margin < -40 ? 'the resonance loop is open.' : `loop margin ${margin.toFixed(2)} dB (at 0 dB it oscillates).`);
+  }
+
   // ---------- audio ----------
   let ctx = null, node = null, starting = null;
   let os = store.get('os', 4);
@@ -651,7 +740,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   async function makeNode() {
     if (node) { node.port.onmessage = null; node.disconnect(); }
     node = new AudioWorkletNode(ctx, 'x0x-vcf', { numberOfInputs: 0, outputChannelCount: [2],
-      processorOptions: { os: ctx.sampleRate >= 88200 ? Math.min(os, 2) : os, knobs: { ...knobState }, wave, steps, bpm } });
+      processorOptions: { os: ctx.sampleRate >= 88200 ? Math.min(os, 2) : os, knobs: { ...knobState }, wave, steps, bpm, circuit: { ...circ } } });
     node.connect(fx.inp);
     node.port.onmessage = (e) => onState(e.data);
     for (const k of KNOBS) send({ type: 'knob', name: k.id, value: knobState[k.id] });
@@ -724,6 +813,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
 
   for (const k of [...KNOBS, ...FX]) drawKnob(k.id);
   showTitle();
+  scheduleAnalysis();
   setWave(wave);
   setBpm(bpm);
   render();
