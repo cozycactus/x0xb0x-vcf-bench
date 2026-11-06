@@ -10,6 +10,8 @@ The model copies an ngspice simulation of one x0xb0x build's KiCad schematic, wh
 
 Press Play, then drag the knobs up and down (arrow keys work too; double-click resets a knob). Tap a step and then a key to set its note; Down, Up, Rest, Accent and Slide change the selected step. If a slow phone crackles, switch "4x" to "2x".
 
+The Space panel is a reverb added on the page (Space, Size, Tone). The x0xb0x has no reverb; the model of the circuit is `dsp.js`, and the reverb sits outside it.
+
 ## Running it locally
 
 The page loads `dsp.js` as an AudioWorklet module, so it needs to be served rather than opened as a file:
