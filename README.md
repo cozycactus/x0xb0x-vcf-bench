@@ -14,6 +14,8 @@ The Preset list holds 30 patterns written for the page: 20 in the classic acid s
 
 The Effects panel adds a distortion (Drive, Color; Drive 0 is off), a tempo-synced ping-pong delay (Delay, Time, Feedback) and a reverb (Space, Size, Tone). The x0xb0x has none of them; the model of the circuit is `dsp.js`, and the effects sit outside it.
 
+The Drums panel adds a kick and a hi-hat to play along with, on the same clock as the sequencer. Pick one of five beats or tap the steps: the kick turns on and off, and the hat goes closed, open, then off. The x0xb0x has no drums either, and the drums are not part of the model.
+
 ## Running it locally
 
 The page loads `dsp.js` as an AudioWorklet module, so it needs to be served rather than opened as a file:

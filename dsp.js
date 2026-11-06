@@ -851,6 +851,8 @@ class Sequencer {
     this.half = false;
     this.prevSlide = false;
     this.current = -1;
+    this.drums = null;           // { kick: [16 x 0|1], hat: [16 x 0|1 closed|2 open] }, for the page's drums
+    this.drumQueue = [];
   }
 
   start(atSample) { this.running = true; this.pos = 0; this.half = false; this.nextStepSample = atSample; this.prevSlide = false; }
@@ -860,6 +862,7 @@ class Sequencer {
     const v = this.voice;
     v.events = v.events.filter(e => e.n < atSample);
     v.events.push({ n: atSample, type: 'gate', value: 0 }, { n: atSample, type: 'slide', value: 0 }, { n: atSample, type: 'accent', value: 0 });
+    this.drumQueue = this.drumQueue.filter(e => e.n < atSample);
     this.current = -1;
   }
 
@@ -891,6 +894,11 @@ class Sequencer {
           v.events.push({ n: t + 1, type: 'gate', value: 1 });
         }
         this.current = this.pos % this.steps.length;
+        if (this.drums) {
+          const k = this.pos % 16;
+          if (this.drums.kick[k]) this.drumQueue.push({ n: t, type: 'kick' });
+          if (this.drums.hat[k]) this.drumQueue.push({ n: t, type: 'hat', value: this.drums.hat[k] });
+        }
         this.half = true;
         this.nextStepSample += stepLen / 2;
       } else {
@@ -906,7 +914,63 @@ class Sequencer {
   }
 }
 
-const api = { X0xVoice, Sequencer, taperA, PART, DEV, FIT, VT, tapNetwork, inputNetwork, discretiseN, transfer, diodeSeries };
+// ---------- drums for the page: not part of the x0xb0x ----------
+/**
+ * A kick (a sine falling from 160 to 48 Hz, a click, soft-clipped) and a hi-hat (noise through
+ * a 7 kHz high-pass, closed or open; a closed hit chokes an open one). Written for the page;
+ * the x0xb0x has no drums, and nothing here is checked against the study. At level 1 a kick on
+ * every beat measures -33 LUFS (K-weighted, no gating) against -34 for the voice at its default
+ * knobs; hats on the off-beats measure -43 closed and -40 open.
+ */
+class DrumKit {
+  constructor(fs) {
+    this.fs = fs;
+    this.level = { kick: 1, hat: 1 };
+    this.kT = 1e9; this.kPh = 0;
+    this.hT = 1e9; this.hOpen = false;
+    this.seed = 22222;
+    const w = 2 * Math.PI * 7000 / fs, al = Math.sin(w) / (2 * 0.8), c = Math.cos(w), a0 = 1 + al;
+    this.hb0 = (1 + c) / 2 / a0; this.hb1 = -(1 + c) / a0; this.hb2 = this.hb0;
+    this.ha1 = -2 * c / a0; this.ha2 = (1 - al) / a0;
+    this.x1 = 0; this.x2 = 0; this.y1 = 0; this.y2 = 0;
+  }
+
+  trigger(type, value) {
+    if (type === 'kick') { this.kT = 0; this.kPh = 0; } else if (type === 'hat') { this.hT = 0; this.hOpen = value === 2; }
+  }
+
+  noise() { this.seed = (this.seed * 1664525 + 1013904223) >>> 0; return this.seed / 2147483648 - 1; }
+
+  /** Render n samples into L (and R) from host frame `frame`, taking triggers from queue. */
+  process(L, R, n, frame, queue) {
+    const dt = 1 / this.fs;
+    for (let i = 0; i < n; i++) {
+      while (queue.length && queue[0].n <= frame + i) { const e = queue.shift(); this.trigger(e.type, e.value); }
+      let y = 0;
+      if (this.kT < 0.8) {
+        const t = this.kT;
+        this.kPh += (48 + 112 * Math.exp(-t / 0.03)) * dt;
+        if (this.kPh >= 1) this.kPh -= 1;
+        const body = Math.sin(2 * Math.PI * this.kPh) * Math.exp(-t / 0.15) * (t > 0.6 ? (0.8 - t) / 0.2 : 1);
+        const click = t < 0.003 ? (1 - t / 0.003) * 0.35 * this.noise() : 0;
+        y += this.level.kick * 0.087 * Math.tanh(1.6 * (body + click));
+        this.kT += dt;
+      }
+      const nz = this.noise();
+      const hp = this.hb0 * nz + this.hb1 * this.x1 + this.hb2 * this.x2 - this.ha1 * this.y1 - this.ha2 * this.y2;
+      this.x2 = this.x1; this.x1 = nz; this.y2 = this.y1; this.y1 = hp;
+      if (this.hT < 1) {
+        const env = Math.exp(-this.hT / (this.hOpen ? 0.22 : 0.035)) * Math.min(1, this.hT / 0.0005);
+        y += this.level.hat * (this.hOpen ? 0.029 : 0.048) * hp * env;
+        this.hT += dt;
+      }
+      L[i] = y;
+      if (R) R[i] = y;
+    }
+  }
+}
+
+const api = { X0xVoice, Sequencer, DrumKit, taperA, PART, DEV, FIT, VT, tapNetwork, inputNetwork, discretiseN, transfer, diodeSeries };
 
 /**
  * Run every path of the code for a moment before the first real block, so the JIT has
@@ -933,6 +997,8 @@ function warmUp(fs, os) {
   s.stop(n * 128);
   s.audition(n * 128 + 64, s.steps[0]);
   for (let b = n; b < n + 40; b++) v.process(buf, 128);
+  const d = new DrumKit(fs), q = [];
+  for (let b = 0; b < 40; b++) { if (b % 4 === 0) q.push({ n: b * 128, type: 'kick' }, { n: b * 128 + 64, type: 'hat', value: 1 + (b & 1) }); d.process(buf, null, 128, b * 128, q); }
 }
 
 const KNOB_NAMES = ['cut', 'res', 'env', 'decay', 'acc', 'tune', 'vol'];
@@ -945,6 +1011,7 @@ if (typeof registerProcessor === 'function') {
       const o = (options && options.processorOptions) || {};
       warmUp(sampleRate, o.os);
       this.voice = new X0xVoice(sampleRate, { os: o.os });
+      this.drums = new DrumKit(sampleRate);
       this.budgetMs = 1000 * 128 / sampleRate;
       this.worstMs = 0;
       this.late = 0;
@@ -962,6 +1029,7 @@ if (typeof registerProcessor === 'function') {
       if (o.steps) this.seq.steps = o.steps;
       if (o.bpm) this.seq.bpm = o.bpm;
       if (o.circuit) this.voice.setCircuit(o.circuit);
+      if (o.drums) { this.seq.drums = o.drums.pattern; Object.assign(this.drums.level, o.drums.level); }
       if (o.play) this.seq.start(64);
       this.port.onmessage = (e) => this.onMessage(e.data);
     }
@@ -977,6 +1045,8 @@ if (typeof registerProcessor === 'function') {
       else if (m.type === 'stop') this.seq.stop(this.frame);
       else if (m.type === 'audition') this.seq.audition(this.frame + 64, m.step);
       else if (m.type === 'circuit') v.setCircuit(m);
+      else if (m.type === 'drums') this.seq.drums = m.pattern;
+      else if (m.type === 'drumLevel') Object.assign(this.drums.level, m.level);
     }
 
     process(inputs, outputs) {
@@ -988,6 +1058,8 @@ if (typeof registerProcessor === 'function') {
       const t0 = clock();
       this.seq.plan(this.frame, n);
       v.process(out, n);
+      if (outputs[1] && outputs[1][0]) this.drums.process(outputs[1][0], outputs[1][1], n, this.frame, this.seq.drumQueue);
+      else this.seq.drumQueue.length = 0;
       const dt = clock() - t0;
       this.busyMs += dt;
       if (dt > this.worstMs) this.worstMs = dt;
