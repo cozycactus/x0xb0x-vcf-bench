@@ -313,21 +313,37 @@ class X0xVoice {
     this.knob = { cut: 0.5, res: 0.5, env: 0.5, decay: 0.5, acc: 0.5, tune: 0.5, vol: 0.75, wave: 'saw' };
     this.fit = { ...FIT, ...(opt.fit || {}) };
     this.P = { ...PART, ...(opt.part || {}) };
+    // what setCircuit scales from: the ladder's caps and Q21's tail current as built
+    this.base = { C: this.P.C, C18: this.P.C18, IT: this.fit.IT, ladder: 1 };
     this._setupConstants();
     this.reset();
   }
 
   /**
    * Change the parts the page offers to try, while playing: Q21's hFE, R97 (the feedback
-   * divider with R98), and the Cutoff pot's taper (its track fraction at half rotation).
+   * divider with R98), the Cutoff pot's taper (its track fraction at half rotation), C18,
+   * a factor on all four ladder caps, the loop's couplers (c25 for C25 and C27, c23, c14 for
+   * C14 and C15), R108 (Q21's tail current) and R62 (how hard the VCO drives Q12). Each one
+   * is a change the study made on its own; the states stay, as they are capacitor voltages.
    */
-  setCircuit({ hfe21, r97, cutTaper } = {}) {
+  setCircuit({ hfe21, r97, cutTaper, c18, ladder, c25, c23, c14, r108, r62 } = {}) {
+    const P = this.P, b = this.base;
     if (hfe21) this.opt.hfe21 = hfe21;
-    if (r97) this.P.R97 = r97;
+    if (r97) P.R97 = r97;
+    if (c18) b.C18 = c18;
+    if (ladder) b.ladder = ladder;
+    P.C = b.C * b.ladder;
+    P.C18 = b.C18 * b.ladder;
+    if (c25) P.C25 = c25;
+    if (c23) P.C23 = c23;
+    if (c14) { P.C14 = c14; P.C15 = c14; }
+    // R108 sets the tail current: about (V - Vbe) / R108, so it scales as 1 / R108
+    if (r108) this.fit.IT = b.IT * 2.2e3 / r108;
+    if (r62) P.R62 = r62;
     if (cutTaper && cutTaper !== this.opt.cutTaper) {
       // A builder trims TM3 for the kit's 500 Hz at Cutoff 50 %, so with another taper TM3 is
       // retrimmed to give the same R73 current there; the top of the knob then moves.
-      const P = this.P, V147 = PART.V561 + this.fit.VEB10;
+      const V147 = PART.V561 + this.fit.VEB10;
       const at = (t) => {
         const [Ras, Rse] = potHalves(P.VR3, t), r3 = Ras + P.R47, Rp = 1 / (1 / r3 + 1 / Rse);
         return [(PART.V561 / r3 + 12 / Rse) * Rp, Rp];

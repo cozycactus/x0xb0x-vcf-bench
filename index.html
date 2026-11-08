@@ -72,7 +72,7 @@ button[aria-pressed="true"] { background: var(--gold-soft); border-color: var(--
 .switch { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 92px; margin-top: 6px; }
 .switch button { min-height: 34px; padding: 6px 0; }
 .fxhead { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
-.circuit { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; }
+.circuit { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; align-items: end; }
 .ctl { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .cread { font: 13px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); min-height: 2.6em; }
 .cread.osc { color: var(--led); }
@@ -172,7 +172,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   <section class="board" aria-label="Circuit">
     <div class="fxhead">
       <span class="legend">Circuit</span>
-      <span class="small">Parts of the board to try. The model was checked against the study on each of these.</span>
+      <span class="small">Parts of the board to try. Each choice is a change the study made, and the model was checked against it there; several changes at once go past what was checked.</span>
     </div>
     <div class="circuit">
       <label class="ctl" for="cHfe"><span class="small">Q21 hFE, the part that moves the resonance most</span>
@@ -186,10 +186,42 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
           <option value="22000">22K, about half</option><option value="10000">10K, stock</option>
           <option value="3900">3.9K, double, as the Devil Fish</option>
         </select></label>
+      <label class="ctl" for="cR108"><span class="small">R108, Q21's current: how strong the loop is</span>
+        <select id="cR108">
+          <option value="3300">3.3K, less current</option><option value="2200">2.2K, stock</option>
+          <option value="1500">1.5K, more current</option>
+        </select></label>
+      <label class="ctl" for="cC18"><span class="small">C18, the ladder's bottom capacitor</span>
+        <select id="cC18">
+          <option value="10">10 nF</option><option value="16.5">16.5 nF, exactly half</option>
+          <option value="18">18 nF, stock</option><option value="33">33 nF, all four equal</option>
+        </select></label>
+      <label class="ctl" for="cLadder"><span class="small">All four ladder capacitors</span>
+        <select id="cLadder">
+          <option value="0.5">× 0.5, about an octave up</option><option value="1">× 1, stock</option>
+          <option value="2">× 2, about an octave down</option>
+        </select></label>
+      <label class="ctl" for="cCouplers"><span class="small">Loop couplers: the high-pass that thins the bass</span>
+        <select id="cCouplers">
+          <option value="stock">Stock</option>
+          <option value="c25big">C25, C27 0.1 → 1 µF</option><option value="c25small">C25, C27 0.1 → 0.047 µF</option>
+          <option value="c23big">C23 1 → 10 µF</option><option value="c23small">C23 1 → 0.22 µF</option>
+          <option value="c14big">C14, C15 1 → 10 µF</option>
+          <option value="large">All four large: no high-pass</option>
+        </select></label>
+      <label class="ctl" for="cR62"><span class="small">R62, how hard the VCO drives the ladder</span>
+        <select id="cR62">
+          <option value="2200000">2.2M, × 0.1, 20 dB quieter</option><option value="880000">880K, × 0.25, 12 dB quieter</option>
+          <option value="440000">440K, × 0.5, 6 dB quieter</option><option value="220000">220K, stock</option>
+          <option value="110000">110K, × 2, 5 dB louder</option><option value="55000">55K, × 4, 10 dB louder</option>
+          <option value="27500">27.5K, × 8, 14 dB louder</option>
+        </select></label>
       <label class="ctl" for="cTaper"><span class="small">Cutoff pot taper, TM3 retrimmed to 500 Hz</span>
         <select id="cTaper">
           <option value="0.2">20 % at half turn, the study's guess</option><option value="0.1">10 % at half turn</option>
         </select></label>
+      <div class="ctl"><span class="small" aria-hidden="true">&nbsp;</span>
+        <button id="cStock" type="button">All parts stock</button></div>
     </div>
     <div class="cread" id="cRead" aria-live="polite"></div>
   </section>
@@ -636,18 +668,44 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
   $('bpmUp').addEventListener('click', () => setBpm(bpm + 2));
 
   // ---------- the circuit panel ----------
-  const CIRC_DEF = { hfe21: 400, r97: 10000, cutTaper: 0.2 };
+  const CIRC_DEF = { hfe21: 400, r97: 10000, cutTaper: 0.2, r108: 2200, c18: 18, ladder: 1, couplers: 'stock', r62: 220000 };
+  // the study's coupler cases, C25 standing for C25 and C27, C14 for C14 and C15
+  const COUPLERS = {
+    stock: { c25: 0.1e-6, c23: 1e-6, c14: 1e-6 },
+    c25big: { c25: 1e-6, c23: 1e-6, c14: 1e-6 }, c25small: { c25: 47e-9, c23: 1e-6, c14: 1e-6 },
+    c23big: { c25: 0.1e-6, c23: 10e-6, c14: 1e-6 }, c23small: { c25: 0.1e-6, c23: 0.22e-6, c14: 1e-6 },
+    c14big: { c25: 0.1e-6, c23: 1e-6, c14: 10e-6 },
+    large: { c25: 100e-6, c23: 1e-3, c14: 1e-3 },
+  };
   const circ = { ...CIRC_DEF, ...store.get('circuit', {}) };
-  const circEls = { hfe21: $('cHfe'), r97: $('cR97'), cutTaper: $('cTaper') };
+  if (!(circ.couplers in COUPLERS)) circ.couplers = 'stock';
+  const circEls = {
+    hfe21: $('cHfe'), r97: $('cR97'), r108: $('cR108'), c18: $('cC18'), ladder: $('cLadder'),
+    couplers: $('cCouplers'), r62: $('cR62'), cutTaper: $('cTaper'),
+  };
+  /** The page's choices as dsp.js part values. */
+  const circParts = () => ({
+    hfe21: circ.hfe21, r97: circ.r97, cutTaper: circ.cutTaper, r108: circ.r108, r62: circ.r62,
+    c18: circ.c18 * 1e-9, ladder: circ.ladder, ...COUPLERS[circ.couplers],
+  });
+  function circChanged() {
+    store.set('circuit', circ);
+    send({ type: 'circuit', ...circParts() });
+    scheduleAnalysis();
+  }
   for (const [k, el] of Object.entries(circEls)) {
     el.value = String(circ[k]);
+    if (el.selectedIndex < 0) { circ[k] = CIRC_DEF[k]; el.value = String(circ[k]); }
     el.addEventListener('change', () => {
-      circ[k] = +el.value;
-      store.set('circuit', circ);
-      send({ type: 'circuit', ...circ });
-      scheduleAnalysis();
+      circ[k] = k === 'couplers' ? el.value : +el.value;
+      circChanged();
     });
   }
+  $('cStock').addEventListener('click', () => {
+    Object.assign(circ, CIRC_DEF);
+    for (const [k, el] of Object.entries(circEls)) el.value = String(circ[k]);
+    circChanged();
+  });
   // The same dsp.js, run here without sound: its small-signal analysis at the knobs' resting
   // point gives the peak, its Q and the loop margin for the chosen parts.
   let anTimer = 0;
@@ -656,7 +714,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     const out = $('cRead');
     if (typeof X0xVoice === 'undefined') { out.textContent = ''; return; }
     const v = new X0xVoice(48000, { os: 1 });
-    v.setCircuit(circ);
+    v.setCircuit(circParts());
     Object.assign(v.knob, { cut: knobState.cut, res: knobState.res, env: knobState.env, decay: knobState.decay, acc: knobState.acc });
     v._controlInit();
     const grid = (a, b, k) => { const f = []; for (let x = a; x < b; x *= k) f.push(x); return f; };
@@ -840,7 +898,7 @@ th { font: 600 12px var(--display); letter-spacing: 0.08em; text-transform: uppe
     if (node) { node.port.onmessage = null; node.disconnect(); }
     // output 0 is the voice, into the effects; output 1 the drums, straight to the master
     node = new AudioWorkletNode(ctx, 'x0x-vcf', { numberOfInputs: 0, numberOfOutputs: 2, outputChannelCount: [2, 2],
-      processorOptions: { os: ctx.sampleRate >= 88200 ? Math.min(os, 2) : os, knobs: { ...knobState }, wave, steps, bpm, circuit: { ...circ },
+      processorOptions: { os: ctx.sampleRate >= 88200 ? Math.min(os, 2) : os, knobs: { ...knobState }, wave, steps, bpm, circuit: circParts(),
         drums: { pattern: drumPattern(), level: drumLevels() } } });
     node.connect(fx.inp, 0);
     node.connect(fx.master, 1);

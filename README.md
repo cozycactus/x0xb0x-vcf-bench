@@ -8,7 +8,7 @@ The model copies an ngspice simulation of one x0xb0x build's KiCad schematic, wh
 
 ## Playing
 
-Press Play, then drag the knobs up and down (arrow keys work too; double-click resets a knob). Tap a step and then a key to set its note; Down, Up, Rest, Accent and Slide change the selected step. The Circuit panel swaps parts of the board while you play: Q21's hFE, the resonance feedback resistor R97, and the Cutoff pot's taper. A line under it shows the filter's peak, Q and loop margin for the chosen parts.
+Press Play, then drag the knobs up and down (arrow keys work too; double-click resets a knob). Tap a step and then a key to set its note; Down, Up, Rest, Accent and Slide change the selected step. The Circuit panel swaps parts of the board while you play: Q21's hFE, the resonance feedback resistor R97, R108 (Q21's current), the bottom ladder capacitor C18, all four ladder capacitors at once, the couplers in the resonance loop, R62 (how hard the oscillator drives the filter), and the Cutoff pot's taper. Each choice is a change the simulation made, one at a time. Lower R62 is also louder, as it would be on the board, and "All parts stock" puts everything back. A line under the panel shows the filter's peak, Q and loop margin for the chosen parts.
 
 The Preset list holds 30 patterns written for the page: 20 in the classic acid style at 118 to 132 BPM, four Goa bass lines and four Goa leads in E at 145 BPM (the leads also brighten the sound), and two from the simulation study. None copies a record. If a slow phone crackles, switch "4x" to "2x".
 
